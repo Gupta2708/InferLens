@@ -64,6 +64,99 @@ button, input, textarea, select {
   @apply shadow-md;
 }
 
+.brand-link {
+  @apply relative inline-flex items-center text-lg font-semibold tracking-normal text-ink transition-all duration-300;
+  isolation: isolate;
+}
+
+.brand-link::before {
+  content: "";
+  position: absolute;
+  inset: -0.85rem -1.1rem;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 18% 48%, rgb(var(--color-signal) / 0.26), transparent 28%),
+    linear-gradient(90deg, rgb(var(--color-signal) / 0.1), transparent 70%);
+  opacity: 0.58;
+  filter: blur(18px);
+  transform: scale(0.92);
+  transition: opacity 220ms ease, transform 220ms ease;
+  z-index: -1;
+}
+
+.logo-wordmark-shell {
+  position: relative;
+  align-items: center;
+  display: inline-flex;
+  border-radius: 999px;
+}
+
+.logo-wordmark-image {
+  height: 2.65rem;
+  width: auto;
+  object-fit: contain;
+  filter:
+    drop-shadow(0 10px 22px rgb(0 0 0 / 0.12))
+    drop-shadow(0 0 18px rgb(var(--color-signal) / 0.2));
+  transition: transform 220ms ease, filter 220ms ease, opacity 220ms ease;
+}
+
+.brand-link:hover::before {
+  opacity: 0.92;
+  transform: scale(1);
+}
+
+.brand-link:hover .logo-wordmark-image {
+  transform: translateY(-0.5px);
+  filter:
+    drop-shadow(0 14px 26px rgb(0 0 0 / 0.14))
+    drop-shadow(0 0 24px rgb(var(--color-signal) / 0.3));
+}
+
+.nav-link {
+  @apply relative inline-flex items-center gap-2 overflow-hidden rounded-full border px-3 py-2 transition-all duration-200;
+}
+
+.nav-link::before {
+  content: "";
+  position: absolute;
+  inset: 0.18rem;
+  border-radius: inherit;
+  background: linear-gradient(120deg, rgb(var(--color-signal) / 0.12), transparent 58%);
+  opacity: 0;
+  transform: translateX(-24%);
+  transition: opacity 220ms ease, transform 220ms ease;
+}
+
+.nav-link:hover::before,
+.nav-link-active::before {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.nav-link > * {
+  position: relative;
+  z-index: 1;
+}
+
+.nav-link-active {
+  box-shadow:
+    0 12px 28px -22px rgb(var(--color-signal) / 0.7),
+    0 0 0 1px rgb(var(--color-signal) / 0.12) inset;
+}
+
+.nav-link-active::after {
+  content: "";
+  position: absolute;
+  left: 1.1rem;
+  right: 1.1rem;
+  bottom: 0.35rem;
+  height: 1px;
+  border-radius: 999px;
+  background: rgb(var(--color-signal) / 0.75);
+  box-shadow: 0 0 14px rgb(var(--color-signal) / 0.48);
+}
+
 .page-enter {
   animation: page-enter 240ms ease-out both;
 }
@@ -108,6 +201,12 @@ button, input, textarea, select {
 .dark .shadow,
 .dark .shadow-md {
   box-shadow: 0 12px 30px -22px rgb(0 0 0 / 0.9);
+}
+
+.dark .logo-wordmark-image {
+  filter:
+    drop-shadow(0 12px 24px rgb(0 0 0 / 0.3))
+    drop-shadow(0 0 24px rgb(var(--color-signal) / 0.28));
 }
 
 .dark input,

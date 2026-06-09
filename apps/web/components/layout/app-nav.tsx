@@ -26,9 +26,9 @@ export function AppNav() {
             <Link
               key={href}
               className={clsx(
-                "group inline-flex items-center gap-2 rounded-full border px-3 py-2 transition-all duration-200",
+                "nav-link group",
                 active
-                  ? "border-signal/30 bg-card text-ink shadow-sm shadow-signal/10"
+                  ? "nav-link-active border-signal/35 bg-card text-ink"
                   : "border-transparent text-ink/65 hover:border-black/10 hover:bg-card/80 hover:text-ink"
               )}
               href={href}

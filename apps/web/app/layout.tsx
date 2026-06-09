@@ -1,14 +1,20 @@
 import type { Metadata } from "next";
+import Image from "next/image";
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { AppNav } from "@/components/layout/app-nav";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "InferLens",
-  description: "LLM gateway and inference observability platform"
+  description: "LLM gateway and inference observability platform",
+  icons: {
+    icon: "/inferlens-mark.svg",
+    apple: "/inferlens-mark.svg"
+  }
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
@@ -23,11 +29,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <div className="min-h-screen">
           <header className="sticky top-0 z-30 border-b border-black/10 bg-paper/90 backdrop-blur">
             <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-              <Link href="/chat" className="group inline-flex items-center gap-3 text-lg font-semibold tracking-normal text-ink">
-                <span className="grid h-9 w-9 place-items-center rounded-xl bg-[#13211f] text-sm text-white shadow-sm transition-transform group-hover:-translate-y-0.5 dark:bg-signal dark:text-[#07100f]">
-                  IL
+              <Link href="/chat" className="brand-link group">
+                <span className="logo-wordmark-shell">
+                  <Image src="/inferlens-logo.svg" alt="InferLens" width={184} height={56} className="logo-wordmark-image" priority />
                 </span>
-                <span>InferLens</span>
+                <span className="sm:hidden text-base font-semibold">InferLens</span>
               </Link>
               <AppNav />
             </div>
