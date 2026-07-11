@@ -7,8 +7,9 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     app_env: str = "development"
     frontend_url: str = "http://localhost:3000"
+    cors_origins: str = ""
     backend_url: str = "http://localhost:8000"
-    database_url: str = "sqlite:///./infersight.db"
+    database_url: str = "sqlite:///./inferlens.db"
     redis_url: str = "redis://localhost:6379/0"
     llm_mock_mode: bool = True
     openai_api_key: str = ""
@@ -20,7 +21,7 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     ingestion_stream: str = "inference_logs"
     dead_letter_stream: str = "dead_letter_logs"
-    worker_group: str = "infersight-workers"
+    worker_group: str = "inferlens-workers"
     mock_chunk_delay_ms: int = 15
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")

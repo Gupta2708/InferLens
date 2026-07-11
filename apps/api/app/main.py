@@ -10,6 +10,12 @@ from app.routes import comparisons, conversations, dashboard, ingest, logs, prov
 settings = get_settings()
 
 
+def _cors_origins() -> list[str]:
+    configured = [origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()]
+    defaults = [settings.frontend_url, "http://localhost:3000", "http://127.0.0.1:3000"]
+    return sorted({origin.rstrip("/") for origin in [*configured, *defaults] if origin})
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     seed_provider_configs()
@@ -20,7 +26,7 @@ app = FastAPI(title="InferLens API", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=list({settings.frontend_url, "http://localhost:3000", "http://127.0.0.1:3000"}),
+    allow_origins=_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

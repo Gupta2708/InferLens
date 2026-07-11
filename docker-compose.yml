@@ -1,16 +1,18 @@
+name: inferlens
+
 services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-infersight}
-      POSTGRES_USER: ${POSTGRES_USER:-infersight}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-infersight}
+      POSTGRES_DB: ${POSTGRES_DB:-inferlens}
+      POSTGRES_USER: ${POSTGRES_USER:-inferlens}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-inferlens}
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-infersight} -d ${POSTGRES_DB:-infersight}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-inferlens} -d ${POSTGRES_DB:-inferlens}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -28,13 +30,15 @@ services:
       retries: 10
 
   api:
+    image: inferlens-api:latest
     build:
       context: ./apps/api
     environment:
       APP_ENV: ${APP_ENV:-development}
       FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
       BACKEND_URL: ${BACKEND_URL:-http://localhost:8000}
-      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://infersight:infersight@postgres:5432/infersight}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://inferlens:inferlens@postgres:5432/inferlens}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       LLM_MOCK_MODE: ${LLM_MOCK_MODE:-true}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
@@ -44,6 +48,7 @@ services:
       DEFAULT_CONTEXT_WINDOW: ${DEFAULT_CONTEXT_WINDOW:-8}
       RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-20}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      PORT: ${API_PORT:-8000}
     ports:
       - "8000:8000"
     depends_on:
@@ -51,14 +56,15 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $${PORT:-8000}"
 
   worker:
+    image: inferlens-worker:latest
     build:
       context: ./apps/api
     environment:
       APP_ENV: ${APP_ENV:-development}
-      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://infersight:infersight@postgres:5432/infersight}
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg://inferlens:inferlens@postgres:5432/inferlens}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       LLM_MOCK_MODE: ${LLM_MOCK_MODE:-true}
       DEFAULT_CONTEXT_WINDOW: ${DEFAULT_CONTEXT_WINDOW:-8}
@@ -72,6 +78,7 @@ services:
     command: python -m app.workers.ingestion_worker
 
   web:
+    image: inferlens-web:latest
     build:
       context: ./apps/web
     environment:
