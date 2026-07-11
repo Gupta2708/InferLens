@@ -1,52 +1,49 @@
 <div align="center">
 
-# 🔭 InferLens
+# InferLens
 
-**A full-stack LLM observability platform** — trace, replay, and compare inference calls across providers.
+**A full-stack LLM observability platform for tracing, replaying, and comparing inference calls across providers.**
 
 [![Next.js](https://img.shields.io/badge/Next.js-App_Router-000000?logo=next.js&logoColor=white)](https://nextjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![Redis](https://img.shields.io/badge/Redis_Streams-DC382D?logo=redis&logoColor=white)](https://redis.io/docs/data-types/streams/)
-[![Docker](https://img.shields.io/badge/Docker_Compose-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
+[![Redis Streams](https://img.shields.io/badge/Redis-Streams-DC382D?logo=redis&logoColor=white)](https://redis.io/docs/data-types/streams/)
+[![Docker Compose](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
 
 </div>
 
-There's a chatbot to generate model traffic, but the core project is the infrastructure around it: gateway routing, inference logging, Redis-based ingestion, Postgres persistence, dashboards, trace replay, provider comparison, and PII-safe observability.
+InferLens includes a chatbot to generate model traffic, but the main project is the infrastructure around each LLM call: provider routing, inference logging, Redis-based ingestion, PostgreSQL persistence, dashboards, trace replay, provider comparison, and PII-safe observability.
 
-> **Most teams can build a chatbot before they can explain what happened inside a single LLM call.** InferLens answers: which provider/model handled it, how long it took, how many tokens it used, whether it streamed/failed/cancelled, what context was sent, whether sensitive data was redacted, whether it can be replayed, and how providers compare on latency, cost, and failures.
+Most teams can build a chatbot before they can explain what happened inside a single LLM request. InferLens answers which provider/model handled it, how long it took, how many tokens it used, whether it streamed, failed, or was cancelled, what context was sent, whether sensitive data was redacted, and whether the request can be replayed.
 
 ---
 
-## ✨ Features
+## Features
 
-- Multi-turn chatbot with short context window, streaming (`fetch()` + `ReadableStream`), and mid-generation cancel
-- Provider-agnostic LLM gateway with **Mock / OpenAI / Gemini** adapters and provider/model validation
-- Inference logs with latency, tokens, cost, status, and errors
-- Redis Streams ingestion + background worker with retry / dead-letter handling
+- Multi-turn chatbot with short context window, streaming responses, and cancellation
+- Provider-agnostic LLM gateway with Mock, OpenAI, and Gemini adapters
+- Provider/model validation to prevent invalid combinations
+- Inference logs with latency, first-token timing, tokens, cost, status, and errors
+- Redis Streams ingestion pipeline with worker processing
 - PostgreSQL storage for messages, traces, logs, spans, stream events, and comparisons
 - PII redaction for observability previews
-- Dashboard (requests, latency, errors, cancellations, tokens, cost, provider usage)
+- Dashboard for requests, latency, errors, cancellations, tokens, cost, and provider usage
 - Trace detail with spans, stream events, redactions, provider errors, and replay history
-- Replay from safe request snapshots + provider comparison across configured models
-- One-command Docker Compose setup
+- Replay from safe request snapshots
+- Provider comparison across configured models
+- Docker Compose setup for local development
 
 ---
 
-## 🏗️ Architecture
+## Architecture
 
 ```mermaid
 flowchart LR
     User([User]) --> Web[Next.js Web UI]
-
-    subgraph CLIENT[" "]
-      Web
-    end
-
     Web --> API[FastAPI API]
 
-    subgraph RUNTIME["API Runtime"]
+    subgraph Runtime[API Runtime]
       API --> Chat[Chat Service]
       Chat --> Gateway[LLM Gateway]
       Chat --> Logger[Observability Logger]
@@ -58,41 +55,21 @@ flowchart LR
     Gateway --> Gemini[Gemini Provider]
 
     Ingestion --> Redis[(Redis Streams)]
-
-    subgraph PIPE["Ingestion Pipeline"]
-      Redis --> Worker[Ingestion Worker]
-      Worker --> Redaction[PII Redaction]
-    end
-
+    Redis --> Worker[Ingestion Worker]
+    Worker --> Redaction[PII Redaction]
     Redaction --> DB[(PostgreSQL)]
 
-    subgraph READ["Read Surfaces"]
-      Dashboard[Dashboard]
-      Logs[Logs & Traces]
-      Replay[Replay]
-      Compare[Provider Comparison]
-    end
-
-    DB --> Dashboard
-    DB --> Logs
-    DB --> Replay
-    DB --> Compare
-
-    classDef store fill:#fde68a,stroke:#b45309,color:#1f2937;
-    classDef provider fill:#bfdbfe,stroke:#1d4ed8,color:#1f2937;
-    classDef read fill:#bbf7d0,stroke:#15803d,color:#1f2937;
-    class Redis,DB store;
-    class Mock,OpenAI,Gemini provider;
-    class Dashboard,Logs,Replay,Compare read;
+    DB --> Dashboard[Dashboard]
+    DB --> Logs[Logs & Traces]
+    DB --> Replay[Replay]
+    DB --> Compare[Provider Comparison]
 ```
 
-The request path stays simple: **UI → API → gateway → provider**. Everything observable forks off through the **Observability Logger**, gets enqueued to Redis, and is persisted asynchronously by the worker (after redaction) so logging never blocks the user's response.
+The request path stays focused: **UI -> API -> gateway -> provider**. Observability data forks through the logger, gets queued in Redis, and is persisted asynchronously by the worker after redaction.
 
 ---
 
-## 🔁 Inference Flow
-
-End-to-end path of a single chat message, from keystroke to persisted trace:
+## Inference Flow
 
 ```mermaid
 sequenceDiagram
@@ -100,119 +77,123 @@ sequenceDiagram
     participant API as FastAPI
     participant Chat as ChatService
     participant GW as LLMGateway
-    participant Prov as Provider
+    participant Provider as Provider
     participant Log as ObservabilityLogger
     participant Redis as Redis Streams
     participant Worker as Worker
     participant DB as PostgreSQL
 
-    UI->>API: Send chat message (stream)
-    API->>Chat: Store message + load recent context
-    Chat->>GW: Validate provider/model + route
-    GW->>Prov: Forward normalized LLMRequest
-    Prov-->>GW: Chunks / response / error
-    GW-->>Chat: Stream chunks back
-
-    par Stream to user
-        Chat-->>API: Incremental tokens
-        API-->>UI: Streamed response + final status
-    and Observe in background
-        Chat->>Log: Capture trace, spans, tokens, latency, snapshot
-        Log->>Redis: XADD inference event
-        Redis->>Worker: XREADGROUP
-        Worker->>Worker: Redact previews + normalize payload
-        Worker->>DB: Persist logs, traces, spans, events, redactions
-    end
+    UI->>API: Send chat message using streaming endpoint
+    API->>Chat: Store message and load recent context
+    Chat->>GW: Validate provider/model and route request
+    GW->>Provider: Forward normalized LLMRequest
+    Provider-->>GW: Chunks, response, or error
+    GW-->>Chat: Normalized provider output
+    Chat-->>UI: Stream response chunks
+    Chat->>Log: Capture trace, spans, tokens, latency, snapshot
+    Log->>Redis: Enqueue inference event
+    Redis->>Worker: Consume stream event
+    Worker->>Worker: Redact previews and normalize payload
+    Worker->>DB: Persist logs, traces, spans, events, redactions
 ```
 
 ---
 
-## ▶️ Replay Flow
+## Replay Flow
 
-Replay rebuilds a request from `request_snapshot_json` — which holds only **replay-safe** inputs. Secrets, auth headers, and raw API keys are never stored there.
+Replay rebuilds a request from `request_snapshot_json`, which contains only replay-safe inputs. API keys, auth headers, cookies, and bearer tokens are never stored there.
 
 ```mermaid
 flowchart LR
-    T[Trace Page] -->|POST /api/traces/:id/replay| RS[ReplayService]
-    RS --> SNAP[Load request_snapshot_json]
-    SNAP --> MUT[Apply replay options]
-    MUT --> GEN[ChatService.generate_once]
-    GEN --> GW[LLM Gateway] --> P[Provider]
-    P --> LOG[Observability Logger] --> Q[Ingestion]
-    Q --> WK[Worker persistence]
-    WK --> NEW[New trace + log rows]
-    NEW --> T2[Replay result in trace UI]
-
-    classDef safe fill:#bbf7d0,stroke:#15803d,color:#1f2937;
-    class SNAP,NEW safe;
+    Trace[Trace Page] --> ReplayAPI[POST /api/traces/:id/replay]
+    ReplayAPI --> Snapshot[Load request_snapshot_json]
+    Snapshot --> Options[Apply replay options]
+    Options --> Gateway[LLM Gateway]
+    Gateway --> Provider[Provider]
+    Provider --> Logger[Observability Logger]
+    Logger --> Redis[(Redis Streams)]
+    Redis --> Worker[Worker persistence]
+    Worker --> Result[Replay trace and log rows]
 ```
 
 ---
 
-## ⚖️ Provider Comparison Flow
+## Provider Comparison Flow
 
-Comparison reuses the same gateway and logging stack — no separate evaluation engine. Each target gets **its own trace and log**.
+Comparison reuses the same gateway and logging stack. Each selected provider/model target gets its own trace and log.
 
 ```mermaid
 flowchart TB
-    P[Prompt + selected targets] --> RUN[Create comparison_run]
-    RUN --> FAN{For each target}
-    FAN --> G1[generate_once → Provider A]
-    FAN --> G2[generate_once → Provider B]
-    FAN --> G3[generate_once → Provider C]
-    G1 --> R[(comparison_results)]
-    G2 --> R
-    G3 --> R
-    R --> UI[Comparison page: latency · tokens · cost · output · errors · trace link]
+    Prompt[Prompt + selected targets] --> Run[Create comparison run]
+    Run --> Fanout{For each target}
+    Fanout --> A[Provider/model A]
+    Fanout --> B[Provider/model B]
+    Fanout --> C[Provider/model C]
+    A --> Results[(comparison_results)]
+    B --> Results
+    C --> Results
+    Results --> UI[Comparison UI: latency, tokens, cost, output, errors, trace link]
 ```
 
-> No quality ranking, LLM-as-judge, or benchmark scoring is included.
+No quality ranking, LLM-as-judge, or benchmark scoring is included.
 
 ---
 
-## 🧰 Tech Stack
+## Tech Stack
 
 | Layer | Technologies |
-|---|---|
-| **Frontend** | Next.js (App Router), TypeScript, Tailwind CSS, Recharts |
-| **Backend** | FastAPI, Pydantic, SQLAlchemy, Alembic, Uvicorn |
-| **Infra** | PostgreSQL, Redis Streams, Docker Compose |
-| **Providers** | Mock, OpenAI, Gemini |
+| --- | --- |
+| Frontend | Next.js App Router, TypeScript, Tailwind CSS, Recharts |
+| Backend | FastAPI, Pydantic, SQLAlchemy, Alembic, Uvicorn |
+| Database | PostgreSQL |
+| Queue | Redis Streams |
+| Providers | Mock, OpenAI, Gemini |
+| Local Infra | Docker Compose |
 
 ---
 
-## 🖥️ Core Pages
+## Core Pages
 
 | Page | Purpose |
-|---|---|
+| --- | --- |
 | `/chat` | Generate inference traffic |
-| `/dashboard` | Aggregate latency, token, cost, error, and provider metrics |
-| `/logs` | Inspect every inference request |
+| `/dashboard` | View latency, token, cost, error, and provider metrics |
+| `/logs` | Inspect inference requests |
 | `/traces/[traceId]` | Debug one request lifecycle |
 | `/comparisons` | Compare provider/model performance |
 | `/settings/providers` | View configured provider models |
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ```bash
-cp .env.example .env          # PowerShell: Copy-Item .env.example .env
+cp .env.example .env
+# PowerShell: Copy-Item .env.example .env
+
 docker compose up --build
 ```
 
 Open:
 
-- **Web:** http://localhost:3000/chat
-- **API health:** http://localhost:8000/health
+- Web: http://localhost:3000/chat
+- API health: http://localhost:8000/health
 
-Compose starts `web`, `api`, `worker`, `postgres`, and `redis`. Don't commit `.env`.
+Run checks:
+
+```bash
+cd apps/api && python -m pytest
+corepack pnpm@9.12.3 --dir apps/web build
+docker compose config
+```
+
+Do not commit `.env`.
 
 ---
 
-## 🧪 Mock Mode
+## Mock Mode
 
-Runs the **entire pipeline without real keys** — still creates logs, traces, dashboard metrics, replays, comparisons, stream events, and redaction records.
+Mock mode runs the full observability pipeline without real provider keys. It still creates logs, traces, dashboard metrics, replays, comparisons, stream events, and redaction records.
 
 ```env
 LLM_MOCK_MODE=true
@@ -221,25 +202,120 @@ DEFAULT_MODEL=mock-fast
 ```
 
 | Model | Purpose |
-|---|---|
+| --- | --- |
 | `mock-fast` | Fast successful response |
-| `mock-slow` | Slow streaming response (cancellation testing) |
+| `mock-slow` | Slow streaming response for cancellation testing |
 | `mock-error` | Simulated provider error |
 
-To use real providers, add `OPENAI_API_KEY` / `GEMINI_API_KEY` to root `.env`, set `LLM_MOCK_MODE=false`, and pick the provider in the UI. Keys are backend-only and never exposed to the frontend.
+To use real providers, set `LLM_MOCK_MODE=false` and configure backend-only provider keys:
+
+```env
+OPENAI_API_KEY=sk-...
+GEMINI_API_KEY=...
+```
 
 ---
 
-## 🔒 Security & Reliability
+## Deployment
 
-- PII redaction (emails, phone numbers, API-key-like strings, JWT-like tokens, credit-card-like patterns) on observability previews
-- API keys never stored in request snapshots; headers, cookies, and bearer tokens never persisted
-- Provider error messages sanitized before display; canonical chat content kept separate from redacted previews
-- Failures normalized and visible in traces: invalid provider/model, missing key, rate limit, model not found, server error, invalid request, cancellation, worker persistence failure
+A typical hosted deployment uses separate services for web, API, worker, Postgres, and Redis.
+
+### Frontend
+
+Deploy `apps/web` as a Next.js app.
+
+```text
+Root Directory: apps/web
+Install Command: corepack enable && corepack pnpm@9.12.3 install --frozen-lockfile
+Build Command: corepack pnpm@9.12.3 build
+Output Directory: default / empty
+```
+
+Set:
+
+```env
+NEXT_PUBLIC_API_BASE_URL=https://YOUR-API-DOMAIN
+```
+
+### API
+
+Deploy `apps/api` as a Docker Web Service.
+
+```text
+Root Directory: apps/api
+Dockerfile Path: Dockerfile
+Docker Build Context Directory: apps/api
+Docker Command: empty
+```
+
+Set:
+
+```env
+SERVICE_ROLE=api
+DATABASE_URL=postgresql+psycopg://USER:ENCODED_PASSWORD@HOST:PORT/DATABASE
+REDIS_URL=rediss://default:REDIS_TOKEN@REDIS_HOST:6379
+FRONTEND_URL=https://YOUR-WEB-DOMAIN
+CORS_ORIGINS=https://YOUR-WEB-DOMAIN,http://localhost:3000,http://127.0.0.1:3000
+LLM_MOCK_MODE=true
+OPENAI_API_KEY=
+GEMINI_API_KEY=
+```
+
+Use `postgresql+psycopg://` for PostgreSQL. If the database password contains special characters, URL-encode them, for example `!` as `%21`.
+
+### Worker
+
+Deploy `apps/api` a second time as a Docker Web Service for ingestion processing.
+
+```text
+Root Directory: apps/api
+Dockerfile Path: Dockerfile
+Docker Build Context Directory: apps/api
+Docker Command: empty
+```
+
+Set:
+
+```env
+SERVICE_ROLE=worker-web
+DATABASE_URL=postgresql+psycopg://USER:ENCODED_PASSWORD@HOST:PORT/DATABASE
+REDIS_URL=rediss://default:REDIS_TOKEN@REDIS_HOST:6379
+LLM_MOCK_MODE=false
+LOG_LEVEL=INFO
+```
+
+`SERVICE_ROLE=worker-web` starts a small health server and the Redis ingestion loop together. The health URL should return:
+
+```json
+{"status":"ok","worker":"running"}
+```
+
+Use the Redis TCP URL (`redis://` or `rediss://`), not a REST URL.
+
+### Deployment Checklist
+
+- API health returns `{"status":"ok"}`.
+- Provider configs load from `/api/providers`.
+- Worker health returns `{"status":"ok","worker":"running"}`.
+- Frontend loads `/chat`.
+- Sending a `mock / mock-fast` message creates a log row.
+- Dashboard request count updates.
+- A log row opens a trace page.
+
+---
+
+## Security and Reliability
+
+- PII redaction covers emails, phone numbers, API-key-like strings, JWT-like tokens, and credit-card-like patterns in observability previews
+- API keys are never stored in request snapshots
+- Headers, cookies, bearer tokens, and secrets are not persisted as raw metadata
+- Provider error messages are sanitized before display
+- Canonical chat content is kept separate from redacted observability previews
+- Failures are normalized in traces: invalid provider/model, missing key, rate limit, model not found, server error, invalid request, cancellation, and worker persistence failure
 - Ingestion is idempotent by `event_id`; repeated worker failures move to dead-letter storage
 
 ---
 
-<div align="center">
-<sub>MIT Licensed</sub>
-</div>
+## License
+
+MIT
