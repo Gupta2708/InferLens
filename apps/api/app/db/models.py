@@ -111,6 +111,11 @@ class InferenceTrace(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     ended_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     duration_ms: Mapped[int | None] = mapped_column(Integer)
+    otel_trace_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    otel_root_span_id: Mapped[str | None] = mapped_column(String(32))
+    otel_instrumented_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    original_trace_id: Mapped[str | None] = mapped_column(String(64), index=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = now_col()
 
 
@@ -157,6 +162,15 @@ class InferenceLog(Base):
     error_type: Mapped[str | None] = mapped_column(String(64), index=True)
     error_message: Mapped[str | None] = mapped_column(Text)
     retryable: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    error_category: Mapped[str | None] = mapped_column(String(64), index=True)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    fallback_provider: Mapped[str | None] = mapped_column(String(64), index=True)
+    routing_strategy: Mapped[str | None] = mapped_column(String(64))
+    routing_history_json: Mapped[list] = mapped_column(JSONCompat, default=list, nullable=False)
+    finish_reason: Mapped[str | None] = mapped_column(String(64), index=True)
+    first_token_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    content_captured: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     request_snapshot_json: Mapped[dict] = mapped_column(JSONCompat, default=dict, nullable=False)
     safe_metadata_json: Mapped[dict] = mapped_column(JSONCompat, default=dict, nullable=False)
     created_at: Mapped[datetime] = now_col()
@@ -211,6 +225,7 @@ class IngestionEvent(Base):
     payload_json: Mapped[dict] = mapped_column(JSONCompat, default=dict, nullable=False)
     created_at: Mapped[datetime] = now_col()
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    dead_lettered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (UniqueConstraint("event_id", name="uq_ingestion_events_event_id"),)
 
@@ -225,6 +240,9 @@ class DeadLetterEvent(Base):
     failure_reason: Mapped[str] = mapped_column(Text, nullable=False)
     payload_json: Mapped[dict] = mapped_column(JSONCompat, default=dict, nullable=False)
     created_at: Mapped[datetime] = now_col()
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    error_category: Mapped[str | None] = mapped_column(String(64), index=True)
+    failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ComparisonRun(Base):
@@ -255,6 +273,13 @@ class ComparisonResult(Base):
     estimated_total_cost: Mapped[float] = mapped_column(Float, default=0, nullable=False)
     output_preview: Mapped[str] = mapped_column(Text, default="", nullable=False)
     error_type: Mapped[str | None] = mapped_column(String(64), index=True)
+    error_category: Mapped[str | None] = mapped_column(String(64), index=True)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    finish_reason: Mapped[str | None] = mapped_column(String(64), index=True)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    fallback_provider: Mapped[str | None] = mapped_column(String(64))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = now_col()
 
 

@@ -19,4 +19,3 @@ def safe_metadata(data: dict | None) -> dict:
 def preview(messages: list[dict], limit: int = 500) -> str:
     text = "\n".join(f"{m.get('role')}: {m.get('content')}" for m in messages)
     return text[:limit]
-

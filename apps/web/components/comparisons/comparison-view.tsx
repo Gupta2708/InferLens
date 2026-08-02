@@ -22,6 +22,9 @@ type Result = {
   estimated_total_cost: number;
   output_preview: string;
   error_type?: string | null;
+  error_category?: string | null;
+  retry_count?: number;
+  fallback_provider?: string | null;
 };
 
 type Run = {
@@ -67,6 +70,14 @@ export function ComparisonView() {
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load providers"));
   }, []);
 
+  useEffect(() => {
+    if (!run || !["queued", "running"].includes(run.status)) return;
+    const timer = window.setInterval(() => {
+      api<Run>(`/api/comparisons/${run.id}`).then(setRun).catch(() => undefined);
+    }, 700);
+    return () => window.clearInterval(timer);
+  }, [run?.id, run?.status]);
+
   const selectedTargets = useMemo(
     () => targets.filter((target) => target.selected && target.model),
     [targets]
@@ -101,9 +112,16 @@ export function ComparisonView() {
     }
   }
 
+  async function retryFailed() {
+    if (!run) return;
+    setRun(await api<Run>(`/api/comparisons/${run.id}/retry-failed`, { method: "POST" }));
+  }
+
   const completed = [...(run?.results.filter((r) => r.status === "completed") || [])];
-  const fastest = [...completed].sort((a, b) => (a.latency_ms || 0) - (b.latency_ms || 0))[0];
-  const cheapest = [...completed].sort((a, b) => a.estimated_total_cost - b.estimated_total_cost)[0];
+  const canRank = completed.length >= 2;
+  const fastest = canRank ? [...completed].sort((a, b) => (a.latency_ms || 0) - (b.latency_ms || 0))[0] : undefined;
+  const cheapest = canRank ? [...completed].sort((a, b) => a.estimated_total_cost - b.estimated_total_cost)[0] : undefined;
+  const failedCount = run?.results.filter((item) => item.status !== "completed").length || 0;
 
   return (
     <main className="page-enter mx-auto max-w-7xl px-4 py-6">
@@ -154,7 +172,7 @@ export function ComparisonView() {
                       <Badge tone={providerMeta?.key_configured ? "success" : "warning"}>
                         {providerMeta?.status_label || "configured"}
                       </Badge>
-                      {mockMode && target.provider !== "mock" && <Badge>mock routed</Badge>}
+                      {mockMode && target.provider === "mock" && <Badge>simulated response</Badge>}
                     </div>
                     <select
                       className="mt-2 w-full rounded-md border border-black/15 bg-white px-3 py-2 text-sm shadow-sm transition focus:border-signal focus:outline-none"
@@ -206,6 +224,11 @@ export function ComparisonView() {
       )}
 
       {run && (
+        <>
+        <div className="mt-5 flex items-center justify-between rounded-xl border border-signal/20 bg-signal/5 p-3 text-sm">
+          <span>Run status: <strong>{run.status}</strong> · {run.results.length} target result(s) persisted</span>
+          {failedCount > 0 && <Button variant="secondary" onClick={retryFailed}>Retry {failedCount} failed target{failedCount === 1 ? "" : "s"}</Button>}
+        </div>
         <section className="mt-5 grid gap-4 lg:grid-cols-3">
           {run.results.map((result) => (
             <article
@@ -223,10 +246,10 @@ export function ComparisonView() {
               </div>
               <div className="grid grid-cols-2 gap-3 text-sm">
                 <Metric label="Latency" value={ms(result.latency_ms)} />
-                <Metric label="First token" value={ms(result.time_to_first_token_ms)} />
+                <Metric label="TTFT" value={result.time_to_first_token_ms == null ? "Not measured" : ms(result.time_to_first_token_ms)} />
                 <Metric label="Tokens" value={result.total_tokens} />
                 <Metric label="Cost" value={money(result.estimated_total_cost)} />
-                <Metric label="Error" value={result.error_type || "-"} />
+                <Metric label="Error" value={result.error_category || result.error_type || "-"} />
                 <div>
                   <div className="text-xs uppercase text-ink/45">Trace</div>
                   <Link className="mt-1 inline-flex items-center gap-1 font-medium text-signal underline" href={`/traces/${result.trace_id}`}>
@@ -236,16 +259,20 @@ export function ComparisonView() {
                 </div>
               </div>
               <div className="mt-4 flex flex-wrap gap-2 text-xs">
+                {result.retry_count ? <Badge>{result.retry_count} retries</Badge> : null}
+                {result.fallback_provider ? <Badge tone="warning">fallback: {result.fallback_provider}</Badge> : null}
                 {result.status !== "completed" && <StatusChip status="error" />}
-                {fastest?.trace_id === result.trace_id && <Badge tone="info">fastest</Badge>}
-                {cheapest?.trace_id === result.trace_id && <Badge tone="warning">cheapest</Badge>}
+                {fastest?.trace_id === result.trace_id && <Badge tone="info">fastest successful result</Badge>}
+                {cheapest?.trace_id === result.trace_id && <Badge tone="warning">cheapest successful result</Badge>}
+                {completed.length === 1 && result.status === "completed" && <Badge tone="info">only successful target</Badge>}
               </div>
               <pre className="mt-4 max-h-52 overflow-auto whitespace-pre-wrap rounded-lg bg-paper p-3 text-xs leading-6">
-                {result.output_preview || result.error_type || "No output captured."}
+                {result.output_preview || (result.status !== "completed" ? result.error_type || "Request failed before output." : "Output not retained because content capture is disabled.")}
               </pre>
             </article>
           ))}
         </section>
+        </>
       )}
     </main>
   );

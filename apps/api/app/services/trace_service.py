@@ -1,6 +1,7 @@
 from sqlalchemy.orm import Session
 
 from app.db import models
+from app.config import get_settings
 
 
 class TraceService:
@@ -28,6 +29,8 @@ class TraceService:
             "status": (trace.status if trace else log.status),
             "conversation_id": trace.conversation_id if trace else log.conversation_id,
             "message_id": trace.message_id if trace else log.message_id,
+            "otel": {"trace_id": trace.otel_trace_id if trace else None, "root_span_id": trace.otel_root_span_id if trace else None, "instrumented_at": trace.otel_instrumented_at if trace else None},
+            "external_trace_url": _external_trace_url(trace.otel_trace_id if trace else None),
             "summary": {
                 "provider": log.provider if log else None,
                 "model": log.model if log else None,
@@ -40,6 +43,13 @@ class TraceService:
                 "error_type": log.error_type if log else None,
                 "error_message": log.error_message if log else None,
                 "safe_metadata": log.safe_metadata_json if log else {},
+                "error_category": log.error_category if log else None,
+                "retry_count": log.retry_count if log else 0,
+                "fallback_provider": log.fallback_provider if log else None,
+                "routing_strategy": log.routing_strategy if log else None,
+                "routing_history": log.routing_history_json if log else [],
+                "finish_reason": log.finish_reason if log else None,
+                "content_captured": log.content_captured if log else False,
             },
             "spans": [_row_dict(s, ["id"]) for s in spans],
             "stream_events": [_row_dict(e, ["id"]) for e in stream_events],
@@ -61,3 +71,8 @@ class TraceService:
 
 def _row_dict(row, exclude: list[str]) -> dict:
     return {k: v for k, v in row.__dict__.items() if not k.startswith("_") and k not in exclude}
+
+
+def _external_trace_url(otel_trace_id: str | None) -> str | None:
+    template = get_settings().external_trace_url_template
+    return template.replace("{trace_id}", otel_trace_id) if template and otel_trace_id else None

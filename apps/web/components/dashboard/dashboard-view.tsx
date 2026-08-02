@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactElement } from "react";
+import { useEffect, useMemo, useState, type ReactElement, type ReactNode } from "react";
 import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "@/lib/api";
 import { money, ms, percent } from "@/lib/formatters";
@@ -16,6 +16,18 @@ type Summary = {
   cancellation_rate: number;
   total_tokens: number;
   estimated_cost: number;
+  success_rate: number;
+  p50_ttft_ms: number;
+  p95_ttft_ms: number;
+  input_tokens: number;
+  output_tokens: number;
+  retry_count: number;
+  fallback_count: number;
+  replay_count: number;
+  comparison_count: number;
+  worker_processing_latency_ms: number;
+  dead_letter_count: number;
+  pii_redaction_count: number;
 };
 
 type ProviderRow = {
@@ -92,16 +104,30 @@ export function DashboardView() {
 
       {error && <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>}
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <MetricGroup title="Overall health">
         <Metric icon={<DatabaseIcon className="h-5 w-5" />} label="Total requests" value={summary?.total_requests ?? 0} hint="Gateway calls observed" tone="info" />
-        <Metric icon={<ActivityIcon className="h-5 w-5" />} label="Average latency" value={ms(summary?.average_latency_ms)} hint="Mean request duration" tone="neutral" />
-        <Metric icon={<TraceIcon className="h-5 w-5" />} label="P95 latency" value={ms(summary?.p95_latency_ms)} hint="Tail latency signal" tone={(summary?.p95_latency_ms ?? 0) > 1000 ? "danger" : "neutral"} />
+        <Metric icon={<ActivityIcon className="h-5 w-5" />} label="Success rate" value={percent(summary?.success_rate)} hint={`${Math.round((summary?.success_rate ?? 0) * (summary?.total_requests ?? 0))} of ${summary?.total_requests ?? 0} completed`} tone={(summary?.success_rate ?? 0) < 0.9 ? "warning" : "success"} />
+        <Metric icon={<TraceIcon className="h-5 w-5" />} label="P95 latency" value={ms(summary?.p95_latency_ms)} hint="Tail request duration" tone={(summary?.p95_latency_ms ?? 0) > 1000 ? "danger" : "neutral"} />
         <Metric icon={<PlugIcon className="h-5 w-5" />} label="Estimated cost" value={money(summary?.estimated_cost ?? 0)} hint="Provider cost estimate" tone="neutral" />
-        <Metric icon={<ActivityIcon className="h-5 w-5" />} label="Error rate" value={percent(summary?.error_rate)} hint="Provider or request failures" tone={(summary?.error_rate ?? 0) > 0.1 ? "danger" : (summary?.error_rate ?? 0) > 0 ? "warning" : "success"} />
-        <Metric icon={<StopIcon className="h-5 w-5" />} label="Cancel rate" value={percent(summary?.cancellation_rate)} hint="User-stopped streams" tone={(summary?.cancellation_rate ?? 0) > 0 ? "warning" : "success"} />
-        <Metric icon={<DatabaseIcon className="h-5 w-5" />} label="Total tokens" value={summary?.total_tokens ?? 0} hint="Input plus output tokens" tone="info" />
+      </MetricGroup>
+      <MetricGroup title="Inference performance">
         <Metric icon={<ActivityIcon className="h-5 w-5" />} label="P50 latency" value={ms(summary?.p50_latency_ms)} hint="Median request duration" tone="neutral" />
-      </div>
+        <Metric icon={<ActivityIcon className="h-5 w-5" />} label="P50 TTFT" value={ms(summary?.p50_ttft_ms)} hint="Median time to first token" tone="neutral" />
+        <Metric icon={<ActivityIcon className="h-5 w-5" />} label="P95 TTFT" value={ms(summary?.p95_ttft_ms)} hint="Tail time to first token" tone="neutral" />
+        <Metric icon={<DatabaseIcon className="h-5 w-5" />} label="Total tokens" value={summary?.total_tokens ?? 0} hint="Input plus output tokens" tone="info" />
+      </MetricGroup>
+      <MetricGroup title="Resilience">
+        <Metric icon={<PlugIcon className="h-5 w-5" />} label="Retries" value={summary?.retry_count ?? 0} hint="Retry attempts" tone="info" />
+        <Metric icon={<TraceIcon className="h-5 w-5" />} label="Fallbacks" value={summary?.fallback_count ?? 0} hint="Alternate provider routes" tone="info" />
+        <Metric icon={<DatabaseIcon className="h-5 w-5" />} label="Dead letters" value={summary?.dead_letter_count ?? 0} hint="Worker messages requiring review" tone={(summary?.dead_letter_count ?? 0) ? "danger" : "success"} />
+        <Metric icon={<ActivityIcon className="h-5 w-5" />} label="Error rate" value={percent(summary?.error_rate)} hint="Provider or request failures" tone={(summary?.error_rate ?? 0) > 0.1 ? "danger" : "success"} />
+      </MetricGroup>
+      <MetricGroup title="Product activity">
+        <Metric icon={<TraceIcon className="h-5 w-5" />} label="Replays" value={summary?.replay_count ?? 0} hint="Linked replay traces" tone="neutral" />
+        <Metric icon={<TraceIcon className="h-5 w-5" />} label="Comparisons" value={summary?.comparison_count ?? 0} hint="Comparison runs" tone="neutral" />
+        <Metric icon={<StopIcon className="h-5 w-5" />} label="Cancellations" value={percent(summary?.cancellation_rate)} hint="User-stopped streams" tone={(summary?.cancellation_rate ?? 0) > 0 ? "warning" : "success"} />
+        <Metric icon={<DatabaseIcon className="h-5 w-5" />} label="PII redactions" value={summary?.pii_redaction_count ?? 0} hint="Persisted redaction events" tone="info" />
+      </MetricGroup>
 
       <div className="mt-6 grid gap-5 xl:grid-cols-2">
         <Chart title="Latency over time" subtitle="Average latency by day" empty={!latency.length}>
@@ -142,6 +168,15 @@ export function DashboardView() {
         </Chart>
       </div>
     </main>
+  );
+}
+
+function MetricGroup({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="mt-6 first:mt-0">
+      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-ink/55">{title}</h2>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{children}</div>
+    </section>
   );
 }
 

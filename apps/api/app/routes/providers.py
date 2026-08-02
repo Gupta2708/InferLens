@@ -2,10 +2,9 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.db import models
 from app.db.session import get_db
 from app.schemas.providers import ProviderListOut, ProviderModelOut
-from app.services.provider_catalog import load_provider_rows
+from app.services.provider_catalog import effective_mock_mode, load_provider_rows
 
 router = APIRouter(prefix="/api/providers", tags=["providers"])
 
@@ -33,7 +32,7 @@ def list_providers(db: Session = Depends(get_db)):
     return ProviderListOut(
         providers=sorted({item.provider for item in models}),
         models=models,
-        mock_mode=get_settings().llm_mock_mode,
+        mock_mode=effective_mock_mode(get_settings()),
     )
 
 

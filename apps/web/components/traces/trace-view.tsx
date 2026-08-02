@@ -4,6 +4,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
+import { getDefaultModelForProvider, getModelsForProvider } from "@/lib/providers";
+import type { ProviderCatalog, ProviderModel } from "@/lib/types";
 import { compactDate, money, ms, shortTraceId } from "@/lib/formatters";
 import { Badge, ModelChip, ProviderChip, StatusChip } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -20,6 +22,8 @@ type Trace = {
   errors: Record<string, any>[];
   redactions: Record<string, any>[];
   replays: Record<string, any>[];
+  otel?: Record<string, any>;
+  external_trace_url?: string | null;
 };
 
 export function TraceView() {
@@ -27,6 +31,10 @@ export function TraceView() {
   const [trace, setTrace] = useState<Trace | null>(null);
   const [replay, setReplay] = useState<Record<string, any> | null>(null);
   const [mockScenario, setMockScenario] = useState("");
+  const [replayProvider, setReplayProvider] = useState("");
+  const [replayModel, setReplayModel] = useState("");
+  const [replacementPrompt, setReplacementPrompt] = useState("");
+  const [models, setModels] = useState<ProviderModel[]>([]);
   const [loadingReplay, setLoadingReplay] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -37,6 +45,7 @@ export function TraceView() {
 
   useEffect(() => {
     load().catch((err) => setError(err instanceof Error ? err.message : "Failed to load trace"));
+    api<ProviderCatalog>("/api/providers").then((catalog) => setModels(catalog.models.filter((item) => item.enabled))).catch(() => undefined);
   }, [params.traceId]);
 
   async function runReplay(label: string, body: Record<string, unknown>) {
@@ -60,6 +69,7 @@ export function TraceView() {
 
   if (!trace) return <main className="mx-auto max-w-7xl px-4 py-6 text-sm text-ink/60">Loading trace...</main>;
   const summary = trace.summary || {};
+  const replayModels = getModelsForProvider(models, replayProvider);
 
   return (
     <main className="page-enter mx-auto max-w-7xl px-4 py-6">
@@ -80,6 +90,8 @@ export function TraceView() {
             <CopyIcon className="h-4 w-4" />
             Copy trace ID
           </button>
+          {trace.otel?.trace_id && <button onClick={() => navigator.clipboard?.writeText(String(trace.otel?.trace_id))} className="focus-ring inline-flex items-center gap-2 rounded-md border border-black/10 bg-white px-3 py-2 text-sm font-medium text-ink/70">Copy OTEL ID</button>}
+          {trace.external_trace_url && <a className="inline-flex items-center gap-2 rounded-md border border-black/10 bg-white px-3 py-2 text-sm font-medium text-ink/70" href={trace.external_trace_url} target="_blank" rel="noreferrer">Open in external observability</a>}
           <Link className="inline-flex items-center gap-2 rounded-md border border-black/10 bg-white px-3 py-2 text-sm font-medium text-ink/70 transition hover:bg-paper hover:text-ink" href="/logs">
             Back to logs
           </Link>
@@ -100,6 +112,15 @@ export function TraceView() {
         <SummaryMetric label={summary.error_type ? "Error" : "Message"} value={summary.error_type || (trace.message_id ? shortTraceId(String(trace.message_id)) : "-")} />
       </section>
 
+      <section className="surface-card mt-5 grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-4">
+        <SummaryMetric label="OTEL trace" value={trace.otel?.trace_id ? shortTraceId(String(trace.otel.trace_id)) : "Not instrumented"} />
+        <SummaryMetric label="Retries" value={summary.retry_count || 0} />
+        <SummaryMetric label="Fallback" value={summary.fallback_provider || "None"} />
+        <SummaryMetric label="Privacy" value={summary.content_captured ? "Redacted capture" : "Metadata only"} />
+      </section>
+
+      <Routing rows={summary.routing_history || []} />
+
       <section className="mt-5 grid gap-4 lg:grid-cols-2">
         <PreviewPanel title="Redacted input preview" value={summary.input_preview || ""} />
         <PreviewPanel title="Redacted output preview" value={summary.output_preview || ""} />
@@ -118,13 +139,30 @@ export function TraceView() {
             </Link>
           )}
         </div>
-        <div className="flex flex-wrap gap-2">
-          <ReplayButton label="Replay same" loading={loadingReplay} onClick={() => runReplay("Replay same", {})} />
-          <ReplayButton label="Replay mock" loading={loadingReplay} onClick={() => runReplay("Replay mock", { provider: "mock", model: "mock-fast" })} />
-          <ReplayButton label="Lower temp" loading={loadingReplay} onClick={() => runReplay("Lower temp", { temperature: 0.2 })} />
-          <ReplayButton label="No context" loading={loadingReplay} onClick={() => runReplay("No context", { without_context: true })} />
-          <input className="rounded-md border border-black/15 px-3 py-2 text-sm shadow-sm focus:border-signal focus:outline-none" placeholder="mock scenario" title="Optional mock scenario for debug replay" value={mockScenario} onChange={(e) => setMockScenario(e.target.value)} />
-          <ReplayButton label="Debug timeout" loading={loadingReplay} onClick={() => runReplay("Debug timeout", { mock_scenario: mockScenario || "timeout" })} />
+        <div className="grid gap-3 lg:grid-cols-[minmax(0,1.3fr)_minmax(180px,0.7fr)_minmax(220px,0.9fr)_auto]">
+          {!summary.content_captured && <label className="grid gap-1 text-xs font-medium uppercase text-ink/50 lg:col-span-4">Replacement prompt required for this replay<textarea value={replacementPrompt} onChange={(event) => setReplacementPrompt(event.target.value)} className="min-h-20 rounded-md border border-black/15 bg-white px-3 py-2 text-sm normal-case shadow-sm focus:border-signal focus:outline-none" placeholder="Enter the prompt to replay. The original content was not retained." /></label>}
+          <select aria-label="Replay provider" value={replayProvider} onChange={(event) => { const next = event.target.value; setReplayProvider(next); setReplayModel(getDefaultModelForProvider(models, next)); }} className="rounded-md border border-black/15 bg-white px-3 py-2 text-sm shadow-sm focus:border-signal focus:outline-none">
+            <option value="">Original provider ({summary.provider || "unknown"})</option>
+            {[...new Set(models.map((item) => item.provider))].map((item) => <option key={item} value={item}>{item}</option>)}
+          </select>
+          <select aria-label="Replay model" value={replayModel} onChange={(event) => setReplayModel(event.target.value)} disabled={!replayProvider} className="rounded-md border border-black/15 bg-white px-3 py-2 text-sm shadow-sm focus:border-signal focus:outline-none disabled:opacity-50">
+            <option value="">Original model ({summary.model || "unknown"})</option>
+            {replayModels.map((item) => <option key={item.model} value={item.model}>{item.model}</option>)}
+          </select>
+          <ReplayButton label="Create replay" loading={loadingReplay} disabled={!summary.content_captured && !replacementPrompt.trim()} onClick={() => runReplay("Create replay", { provider: replayProvider || undefined, model: replayModel || undefined, edited_user_message: replacementPrompt.trim() || undefined })} />
+        </div>
+        <details className="mt-3 text-sm text-ink/55"><summary className="cursor-pointer font-medium text-signal">Advanced replay options</summary><div className="mt-3 flex flex-wrap gap-2"><ReplayButton label="Lower temperature" loading={loadingReplay} onClick={() => runReplay("Lower temperature", { temperature: 0.2, edited_user_message: replacementPrompt.trim() || undefined })} /><ReplayButton label="No context" loading={loadingReplay} onClick={() => runReplay("No context", { without_context: true, edited_user_message: replacementPrompt.trim() || undefined })} /><input className="rounded-md border border-black/15 px-3 py-2 text-sm shadow-sm focus:border-signal focus:outline-none" placeholder="Mock scenario (optional)" value={mockScenario} onChange={(e) => setMockScenario(e.target.value)} /></div></details>
+        <div className="mt-4 grid gap-3 rounded-xl border border-black/10 bg-paper/60 p-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
+          <SummaryMetric label="Replay source" value={`${summary.provider || "-"} / ${summary.model || "-"}`} />
+          <SummaryMetric label="Replay privacy" value={summary.content_captured ? "Exact replay snapshot available" : "Redacted replay or replacement prompt required"} />
+          {replay && <>
+            <SummaryMetric label="Replay target" value={`${replay.replay?.provider || "-"} / ${replay.replay?.model || "-"}`} />
+            <SummaryMetric label="Status" value={`${replay.original?.status || "-"} → ${replay.replay?.status || replay.status || "-"}`} />
+            <SummaryMetric label="Latency" value={`${ms(replay.original?.latency_ms)} → ${ms(replay.replay?.latency_ms)}`} />
+            <SummaryMetric label="TTFT" value={`${ms(replay.original?.time_to_first_token_ms)} → ${ms(replay.replay?.time_to_first_token_ms)}`} />
+            <SummaryMetric label="Tokens" value={`${(replay.original?.input_tokens || 0) + (replay.original?.output_tokens || 0)} → ${(replay.replay?.input_tokens || 0) + (replay.replay?.output_tokens || 0)}`} />
+            <SummaryMetric label="Estimated cost" value={`${money(replay.original?.estimated_cost || 0)} → ${money(replay.replay?.estimated_cost || 0)}`} />
+          </>}
         </div>
       </section>
 
@@ -161,14 +199,18 @@ function PreviewPanel({ title, value }: { title: string; value: string }) {
   );
 }
 
-function ReplayButton({ label, loading, onClick }: { label: string; loading: string; onClick: () => void }) {
+function ReplayButton({ label, loading, onClick, disabled = false }: { label: string; loading: string; onClick: () => void; disabled?: boolean }) {
   const active = loading === label;
   return (
-    <Button onClick={onClick} disabled={Boolean(loading)} variant="secondary">
+    <Button onClick={onClick} disabled={Boolean(loading) || disabled} variant="secondary">
       {active ? <StopIcon className="h-4 w-4" /> : <PlayIcon className="h-4 w-4" />}
       {active ? "Running" : label}
     </Button>
   );
+}
+
+function Routing({ rows }: { rows: Record<string, any>[] }) {
+  return <section className="surface-card mt-5 p-5"><h2 className="font-semibold">Routing</h2><p className="mt-1 text-sm text-ink/50">Provider attempts, retries, fallback, and circuit-breaker activity.</p><div className="mt-3 space-y-2">{rows.map((row, index) => <div key={index} className="rounded-lg bg-paper p-3 text-sm">{row.provider} · attempt {row.attempt} · {row.outcome}{row.error_category ? ` · ${row.error_category}` : ""}{row.circuit_state ? ` · breaker ${row.circuit_state}` : ""}</div>)}{!rows.length && <EmptySmall>Primary provider completed without recorded retries.</EmptySmall>}</div></section>;
 }
 
 function Timeline({ rows }: { rows: Record<string, any>[] }) {

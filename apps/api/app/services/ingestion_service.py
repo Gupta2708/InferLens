@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 from app.config import get_settings
 from app.db import models
 from app.observability.redaction import redact_event_payload
+from app.observability.trace_context import inject_trace_context
+from app.observability.metrics import REDIS, REDACTIONS
 
 
 def _json_safe(value: Any) -> Any:
@@ -25,7 +27,7 @@ class IngestionService:
         self.settings = get_settings()
 
     def enqueue(self, event: dict) -> str:
-        event = json.loads(json.dumps(event, default=_json_safe))
+        event = inject_trace_context(json.loads(json.dumps(event, default=_json_safe)))
         event_id = event["event_id"]
         existing = self.db.query(models.IngestionEvent).filter_by(event_id=event_id).first()
         if existing:
@@ -56,7 +58,11 @@ class IngestionService:
                 self.settings.ingestion_stream,
                 {"event_id": event_id, "payload": json.dumps(event, default=_json_safe)},
             )
+            if REDIS:
+                REDIS.labels("success").inc()
         except Exception:
+            if REDIS:
+                REDIS.labels("fallback").inc()
             process_ingestion_event(self.db, event_id, event)
         return event_id
 
@@ -77,6 +83,11 @@ def process_ingestion_event(db: Session, event_id: str, payload: dict) -> None:
         started_at=datetime.now(timezone.utc),
         ended_at=datetime.now(timezone.utc),
         duration_ms=clean.get("latency_ms"),
+        otel_trace_id=clean.get("otel_trace_id"),
+        otel_root_span_id=clean.get("otel_root_span_id"),
+        otel_instrumented_at=_parse_dt(clean.get("otel_instrumented_at")),
+        original_trace_id=clean.get("original_trace_id"),
+        completed_at=_parse_dt(clean.get("completed_at")),
     )
     db.add(trace)
     db.add(
@@ -104,6 +115,15 @@ def process_ingestion_event(db: Session, event_id: str, payload: dict) -> None:
             error_type=clean.get("error_type"),
             error_message=clean.get("error_message"),
             retryable=clean.get("retryable", False),
+            error_category=clean.get("error_category") or clean.get("error_type"),
+            retry_count=clean.get("retry_count", 0),
+            fallback_provider=clean.get("fallback_provider"),
+            routing_strategy=clean.get("routing_strategy"),
+            routing_history_json=clean.get("routing_history_json", []),
+            finish_reason=clean.get("finish_reason"),
+            first_token_at=_parse_dt(clean.get("first_token_at")),
+            completed_at=_parse_dt(clean.get("completed_at")),
+            content_captured=clean.get("content_captured", False),
             request_snapshot_json=clean.get("request_snapshot_json", {}),
             safe_metadata_json=clean.get("safe_metadata_json", {}),
         )
@@ -164,6 +184,8 @@ def process_ingestion_event(db: Session, event_id: str, payload: dict) -> None:
                 redacted_count=redaction.redacted_count,
             )
         )
+        if REDACTIONS:
+            REDACTIONS.labels("persistence").inc(redaction.redacted_count)
     _mark_processed(db, event_id)
     db.commit()
 

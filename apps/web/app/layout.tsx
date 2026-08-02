@@ -1,13 +1,12 @@
      import type { Metadata } from "next";
-import Image from "next/image";
-import Link from "next/link";
 import type { ReactNode } from "react";
-import { AppNav } from "@/components/layout/app-nav";
+import { AppShell } from "@/components/layout/app-shell";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "InferLens",
-  description: "LLM gateway and inference observability platform",
+  title: "InferLens — LLM Gateway and Observability Platform",
+  description: "Route, trace, replay, and compare LLM requests across providers with latency, token, cost, error, and lifecycle observability.",
+  openGraph: { title: "InferLens — LLM Gateway and Observability Platform", description: "Route, trace, replay, and compare LLM requests across providers with latency, token, cost, error, and lifecycle observability." },
   icons: {
     icon: "/inferlens-mark.svg",
     apple: "/inferlens-mark.svg"
@@ -26,20 +25,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         />
       </head>
       <body>
-        <div className="min-h-screen">
-          <header className="sticky top-0 z-30 border-b border-black/10 bg-paper/90 backdrop-blur">
-            <div className="mx-auto flex max-w-7xl flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-              <Link href="/chat" className="brand-link group">
-                <span className="logo-mark-shell">
-                  <Image src="/inferlens-mark.svg" alt="InferLens mark" width={44} height={44} className="logo-mark-image" priority />
-                </span>
-                <span className="brand-title">Infer<span>Lens</span></span>
-              </Link>
-              <AppNav />
-            </div>
-          </header>
-          {children}
-        </div>
+        <div className="min-h-screen"><AppShell>{children}</AppShell></div>
       </body>
     </html>
   );

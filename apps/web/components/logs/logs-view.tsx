@@ -1,10 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { api } from "@/lib/api";
 import { compactDate, money, ms, shortTraceId } from "@/lib/formatters";
-import type { LogRow } from "@/lib/types";
+import type { LogRow, ProviderCatalog } from "@/lib/types";
 import { Badge, ModelChip, ProviderChip, StatusChip } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { CopyIcon, DatabaseIcon, TraceIcon } from "@/components/ui/icons";
@@ -15,11 +15,17 @@ export function LogsView() {
   const [model, setModel] = useState("");
   const [status, setStatus] = useState("");
   const [conversationId, setConversationId] = useState("");
+  const [traceId, setTraceId] = useState("");
   const [errorType, setErrorType] = useState("");
   const [latencyGt, setLatencyGt] = useState("");
   const [dateFrom, setDateFrom] = useState("");
   const [dateTo, setDateTo] = useState("");
   const [error, setError] = useState("");
+  const [catalog, setCatalog] = useState<ProviderCatalog | null>(null);
+
+  useEffect(() => {
+    api<ProviderCatalog>("/api/providers").then(setCatalog).catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -27,6 +33,7 @@ export function LogsView() {
     if (model) params.set("model", model);
     if (status) params.set("status", status);
     if (conversationId) params.set("conversation_id", conversationId);
+    if (traceId) params.set("trace_id", traceId);
     if (errorType) params.set("error_type", errorType);
     if (latencyGt) params.set("latency_gt", latencyGt);
     if (dateFrom) params.set("date_from", new Date(dateFrom).toISOString());
@@ -37,20 +44,24 @@ export function LogsView() {
         setError("");
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load logs"));
-  }, [provider, model, status, conversationId, errorType, latencyGt, dateFrom, dateTo]);
+  }, [provider, model, status, conversationId, traceId, errorType, latencyGt, dateFrom, dateTo]);
 
   function clearFilters() {
     setProvider("");
     setModel("");
     setStatus("");
     setConversationId("");
+    setTraceId("");
     setErrorType("");
     setLatencyGt("");
     setDateFrom("");
     setDateTo("");
   }
 
-  const hasFilters = Boolean(provider || model || status || conversationId || errorType || latencyGt || dateFrom || dateTo);
+  const hasFilters = Boolean(provider || model || status || conversationId || traceId || errorType || latencyGt || dateFrom || dateTo);
+  const providers = useMemo(() => [...new Set(catalog?.models.filter((item) => item.enabled).map((item) => item.provider) || [])], [catalog]);
+  const models = useMemo(() => (catalog?.models || []).filter((item) => !provider || item.provider === provider), [catalog, provider]);
+  const errorCategories = useMemo(() => [...new Set(logs.map((row) => row.error_type).filter(Boolean))] as string[], [logs]);
 
   return (
     <main className="page-enter mx-auto max-w-7xl px-4 py-6">
@@ -67,8 +78,8 @@ export function LogsView() {
 
       <section className="surface-card mb-5 p-4">
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <FilterInput label="Provider" placeholder="mock" value={provider} onChange={setProvider} />
-          <FilterInput label="Model" placeholder="mock-fast" value={model} onChange={setModel} />
+          <FilterSelect label="Provider" value={provider} onChange={(value) => { setProvider(value); setModel(""); }} options={providers} allLabel="all providers" />
+          <FilterSelect label="Model" value={model} onChange={setModel} options={models.map((item) => item.model)} allLabel="all models" />
           <label className="grid gap-1 text-xs font-medium uppercase text-ink/50">
             Status
             <select className="rounded-lg border border-black/15 bg-white px-3 py-2 text-sm text-ink shadow-sm focus:border-signal focus:outline-none" value={status} onChange={(e) => setStatus(e.target.value)}>
@@ -78,8 +89,9 @@ export function LogsView() {
               <option value="cancelled">cancelled</option>
             </select>
           </label>
-          <FilterInput label="Conversation ID" placeholder="uuid" value={conversationId} onChange={setConversationId} />
-          <FilterInput label="Error type" placeholder="provider_server_error" value={errorType} onChange={setErrorType} />
+          <FilterInput label="Conversation ID" placeholder="e.g. UUID" value={conversationId} onChange={setConversationId} />
+          <FilterInput label="Trace ID" placeholder="e.g. trace_abc123" value={traceId} onChange={setTraceId} />
+          <FilterSelect label="Error category" value={errorType} onChange={setErrorType} options={errorCategories} allLabel="all error categories" />
           <FilterInput label="Latency greater than" placeholder="ms" value={latencyGt} onChange={setLatencyGt} />
           <FilterInput label="From" type="date" value={dateFrom} onChange={setDateFrom} />
           <FilterInput label="To" type="date" value={dateTo} onChange={setDateTo} />
@@ -96,7 +108,7 @@ export function LogsView() {
           </div>
           <p className="text-xs text-ink/45">Trace previews are redacted by default.</p>
         </div>
-        <div className="max-h-[70vh] overflow-auto">
+        <div className="overflow-x-auto">
           <table className="w-full min-w-[1040px] border-collapse text-sm">
             <thead className="sticky top-0 z-10 bg-paper text-left text-xs uppercase text-ink/55 shadow-sm">
               <tr>
@@ -105,6 +117,7 @@ export function LogsView() {
                 <th className="p-3">Provider</th>
                 <th className="p-3">Model</th>
                 <th className="p-3">Latency</th>
+                <th className="p-3">TTFT</th>
                 <th className="p-3">Tokens</th>
                 <th className="p-3">Cost</th>
                 <th className="p-3">Error</th>
@@ -120,6 +133,7 @@ export function LogsView() {
                   <td className="p-3"><ProviderChip provider={log.provider} /></td>
                   <td className="p-3"><ModelChip model={log.model} /></td>
                   <td className="whitespace-nowrap p-3">{ms(log.latency_ms)}</td>
+                  <td className="whitespace-nowrap p-3">{log.time_to_first_token_ms == null ? "Not measured" : ms(log.time_to_first_token_ms)}</td>
                   <td className="p-3">{log.total_tokens}</td>
                   <td className="whitespace-nowrap p-3">{money(log.estimated_total_cost)}</td>
                   <td className="p-3">{log.error_type ? <Badge tone="error">{log.error_type}</Badge> : <span className="text-ink/40">-</span>}</td>
@@ -152,6 +166,10 @@ export function LogsView() {
       </div>
     </main>
   );
+}
+
+function FilterSelect({ label, value, onChange, options, allLabel }: { label: string; value: string; onChange: (value: string) => void; options: string[]; allLabel: string }) {
+  return <label className="grid gap-1 text-xs font-medium uppercase text-ink/50">{label}<select className="rounded-lg border border-black/15 bg-white px-3 py-2 text-sm text-ink shadow-sm focus:border-signal focus:outline-none" value={value} onChange={(event) => onChange(event.target.value)}><option value="">{allLabel}</option>{options.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>;
 }
 
 function FilterInput({

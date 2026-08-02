@@ -76,6 +76,21 @@ def default_model_for_provider(provider: str) -> str:
     return ""
 
 
+def configured_real_providers(settings=None) -> set[str]:
+    settings = settings or get_settings()
+    configured = set()
+    if settings.openai_api_key:
+        configured.add("openai")
+    if settings.gemini_api_key:
+        configured.add("gemini")
+    return configured
+
+
+def effective_mock_mode(settings=None) -> bool:
+    settings = settings or get_settings()
+    return settings.llm_mock_mode or not configured_real_providers(settings)
+
+
 def provider_model_exists(db: Session | None, provider: str, model: str) -> bool:
     normalized_model = normalize_model_alias(provider, model)
     if db is not None:
@@ -123,21 +138,20 @@ def with_runtime_status(row: models.ProviderConfig | dict, settings=None) -> dic
         }
 
     provider = item["provider"]
-    key_configured = True
+    key_configured = provider == "mock"
     if provider == "openai":
         key_configured = bool(settings.openai_api_key)
     elif provider == "gemini":
         key_configured = bool(settings.gemini_api_key)
 
-    available = bool(item["enabled"]) and key_configured and not (
-        settings.llm_mock_mode and provider != "mock"
-    )
+    mock_mode = effective_mock_mode(settings)
+    available = bool(item["enabled"]) and (provider == "mock" or (key_configured and not mock_mode))
     item["key_configured"] = key_configured
     item["available"] = available
     item["status_label"] = provider_status_label(
         provider=provider,
         key_configured=key_configured,
-        llm_mock_mode=settings.llm_mock_mode,
+        llm_mock_mode=mock_mode,
         available=available,
     )
     return item
@@ -147,9 +161,7 @@ def provider_status_label(
     *, provider: str, key_configured: bool, llm_mock_mode: bool, available: bool
 ) -> str:
     if provider == "mock":
-        return "mock mode" if llm_mock_mode else "enabled"
-    if not key_configured:
-        return "needs key"
+        return "mock mode" if llm_mock_mode else "available"
     if llm_mock_mode:
-        return "mock mode"
-    return "configured" if available else "configured"
+        return "unavailable"
+    return "configured" if key_configured and available else "unavailable"

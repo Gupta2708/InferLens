@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import clsx from "clsx";
 import { api } from "@/lib/api";
@@ -16,16 +16,35 @@ export function ChatConsole() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [active, setActive] = useState<Conversation | null>(null);
   const [models, setModels] = useState<ProviderModel[]>([]);
-  const [provider, setProvider] = useState("mock");
-  const [model, setModel] = useState("mock-fast");
+  const [provider, setProvider] = useState(() => readPreference("inferlens-selected-provider") || "");
+  const [model, setModel] = useState(() => readPreference("inferlens-selected-model") || "");
   const [input, setInput] = useState("");
   const [streamingText, setStreamingText] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
-  const [mockScenario, setMockScenario] = useState("");
+  const [mockScenario, setMockScenario] = useState(() => readPreference("inferlens-mock-scenario") || "");
+  const [hasNewerContent, setHasNewerContent] = useState(false);
   const [error, setError] = useState("");
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const messagePanelRef = useRef<HTMLDivElement | null>(null);
   const conversationListRef = useRef<HTMLDivElement | null>(null);
+  const scrollPositions = useRef<Record<string, number>>({});
+  const restoredConversation = useRef<string | null>(null);
+  const followLatest = useRef(true);
+
+  function saveScrollPosition(conversationId = active?.id) {
+    const panel = messagePanelRef.current;
+    if (!conversationId || !panel) return;
+    scrollPositions.current[conversationId] = Math.max(0, panel.scrollHeight - panel.clientHeight - panel.scrollTop);
+    sessionStorage.setItem("inferlens-chat-scroll", JSON.stringify(scrollPositions.current));
+  }
+
+  function scrollToLatest() {
+    const panel = messagePanelRef.current;
+    if (!panel) return;
+    panel.scrollTo({ top: panel.scrollHeight, behavior: "smooth" });
+    followLatest.current = true;
+    setHasNewerContent(false);
+  }
 
   async function refresh(preferredId = active?.id) {
     const list = await api<Conversation[]>("/api/conversations");
@@ -39,27 +58,84 @@ export function ChatConsole() {
   }
 
   useEffect(() => {
+    try {
+      scrollPositions.current = JSON.parse(sessionStorage.getItem("inferlens-chat-scroll") || "{}");
+    } catch {
+      scrollPositions.current = {};
+    }
     api<ProviderCatalog>("/api/providers")
       .then((data) => {
         setModels(data.models);
-        const providers = [...new Set(data.models.filter((m) => m.enabled).map((m) => m.provider))];
-        const currentProvider = providers.includes(provider) ? provider : providers[0] || provider;
-        const defaultModel = getDefaultModelForProvider(data.models, currentProvider) || model;
-        setProvider(currentProvider);
-        setModel(defaultModel);
+        const enabled = data.models.filter((item) => item.enabled);
+        const selectable = new Set(enabled.filter((item) => item.available || item.provider === "mock").map((item) => item.provider));
+        const configured = enabled.filter((item) => item.provider !== "mock" && item.key_configured).map((item) => item.provider);
+        const bestFallback = configured.find((item) => selectable.has(item))
+          || enabled.find((item) => item.provider !== "mock" && selectable.has(item.provider))?.provider
+          || (selectable.has("mock") ? "mock" : enabled[0]?.provider || "mock");
+        const savedProvider = readPreference("inferlens-selected-provider");
+        const requestedProvider = provider || savedProvider;
+        const nextProvider = requestedProvider && selectable.has(requestedProvider) ? requestedProvider : bestFallback;
+        const savedModel = model || readPreference("inferlens-selected-model") || "";
+        setProvider(nextProvider);
+        setModel(isValidProviderModel(data.models, nextProvider, savedModel)
+          ? savedModel
+          : getDefaultModelForProvider(data.models, nextProvider));
+        if (nextProvider !== "mock") setMockScenario("");
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Failed to load providers"));
     refresh();
   }, []);
 
-  const providerModels = useMemo(() => getModelsForProvider(models, provider), [models, provider]);
+  useEffect(() => {
+    if (provider) localStorage.setItem("inferlens-selected-provider", provider);
+  }, [provider]);
+
+  useEffect(() => {
+    if (model) localStorage.setItem("inferlens-selected-model", model);
+  }, [model]);
+
+  useEffect(() => {
+    if (provider === "mock") localStorage.setItem("inferlens-mock-scenario", mockScenario);
+  }, [mockScenario, provider]);
+
+  useEffect(() => () => saveScrollPosition(), [active?.id]);
+
+  const providerModels = useMemo(() => {
+    const available = getModelsForProvider(models, provider);
+    return provider === "mock" ? available.filter((item) => item.model === "mock-fast") : available;
+  }, [models, provider]);
+  const messages = active?.messages || [];
 
   useEffect(() => {
     if (!models.length) return;
-    if (!isValidProviderModel(models, provider, model)) {
-      setModel(getDefaultModelForProvider(models, provider));
+    if (!provider || !isValidProviderModel(models, provider, model) || (provider === "mock" && model !== "mock-fast")) {
+      setModel(provider === "mock" ? "mock-fast" : getDefaultModelForProvider(models, provider));
     }
   }, [models, provider, model]);
+
+  useLayoutEffect(() => {
+    if (!active?.id || restoredConversation.current === active.id) return;
+    const conversationId = active.id;
+    requestAnimationFrame(() => {
+      const panel = messagePanelRef.current;
+      if (!panel || active?.id !== conversationId) return;
+      const bottomOffset = scrollPositions.current[conversationId];
+      panel.scrollTop = bottomOffset === undefined
+        ? panel.scrollHeight
+        : Math.max(0, panel.scrollHeight - panel.clientHeight - bottomOffset);
+      followLatest.current = bottomOffset === undefined || bottomOffset <= 110;
+      setHasNewerContent(false);
+      restoredConversation.current = conversationId;
+    });
+  }, [active?.id, messages.length]);
+
+  useEffect(() => {
+    if (!isStreaming || !streamingText) return;
+    requestAnimationFrame(() => {
+      if (followLatest.current) scrollToLatest();
+      else setHasNewerContent(true);
+    });
+  }, [isStreaming, streamingText]);
 
   const visibleConversations = conversations;
 
@@ -73,7 +149,7 @@ export function ChatConsole() {
       setActive(conversation);
       setConversations((current) => [conversation, ...current.filter((item) => item.id !== conversation.id)]);
       conversationListRef.current?.scrollTo({ top: 0 });
-      messagePanelRef.current?.scrollTo({ top: 0 });
+      restoredConversation.current = null;
       requestAnimationFrame(() => inputRef.current?.focus());
       await refresh(conversation.id);
       return await api<Conversation>(`/api/conversations/${conversation.id}`);
@@ -99,7 +175,7 @@ export function ChatConsole() {
       } else {
         setActive(null);
       }
-      messagePanelRef.current?.scrollTo({ top: 0 });
+      restoredConversation.current = null;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to delete conversation");
     }
@@ -108,10 +184,11 @@ export function ChatConsole() {
   async function selectConversation(conversationId: string) {
     try {
       setError("");
+      saveScrollPosition();
       setStreamingText("");
       const conversation = await api<Conversation>(`/api/conversations/${conversationId}`);
+      restoredConversation.current = null;
       setActive(conversation);
-      messagePanelRef.current?.scrollTo({ top: 0 });
       requestAnimationFrame(() => inputRef.current?.focus());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load conversation");
@@ -138,6 +215,8 @@ export function ChatConsole() {
         optimisticMessage(conversation.id, "assistant", "")
       ]
     });
+    followLatest.current = true;
+    requestAnimationFrame(scrollToLatest);
     try {
       await streamConversationMessage(
         conversation.id,
@@ -172,8 +251,6 @@ export function ChatConsole() {
     setIsStreaming(false);
     await refresh(active.id);
   }
-
-  const messages = active?.messages || [];
 
   return (
     <main className="page-enter mx-auto grid h-[calc(100dvh-88px)] max-w-7xl grid-cols-1 gap-4 overflow-hidden px-4 py-5 lg:grid-cols-[330px_minmax(0,1fr)]">
@@ -238,9 +315,9 @@ export function ChatConsole() {
               onChange={(e) => {
                 const nextProvider = e.target.value;
                 setProvider(nextProvider);
-                // reset model to default for selected provider
                 const defaultModel = getDefaultModelForProvider(models, nextProvider);
                 setModel(defaultModel || "");
+                if (nextProvider !== "mock") setMockScenario("");
               }}
             >
               {[...new Set(models.map((item) => item.provider))].map((item) => (
@@ -259,19 +336,20 @@ export function ChatConsole() {
               ))}
             </select>
           </Control>
-          <Control label="Mock scenario">
+          {provider === "mock" && <Control label="Mock scenario">
             <select className="min-w-56 rounded-md border border-black/15 bg-white px-3 py-2 text-sm shadow-sm transition focus:border-signal focus:outline-none" value={mockScenario} onChange={(e) => setMockScenario(e.target.value)}>
               <option value="">normal</option>
-              <option value="timeout">mock timeout</option>
-              <option value="rate_limit">mock rate limit</option>
-              <option value="provider_error">mock provider error</option>
-              <option value="cancel_after_3">mock cancel test</option>
+              <option value="slow">slow</option>
+              <option value="timeout">timeout</option>
+              <option value="provider_error">error</option>
+              <option value="stream_interruption">stream interruption</option>
+              <option value="pii">PII test</option>
             </select>
-          </Control>
-          <Button onClick={cancel} disabled={!isStreaming} variant="warning">
+          </Control>}
+          {isStreaming && <Button onClick={cancel} variant="warning">
             <StopIcon className="h-4 w-4" />
-            Cancel
-          </Button>
+            Stop generation
+          </Button>}
           {isStreaming && (
             <div className="ml-auto inline-flex items-center gap-2 rounded-full border border-signal/20 bg-signal/10 px-3 py-2 text-sm text-signal">
               <span className="typing-dot h-2 w-2 rounded-full bg-signal" />
@@ -280,7 +358,18 @@ export function ChatConsole() {
           )}
         </div>
 
-        <div ref={messagePanelRef} className="min-h-0 flex-1 overflow-auto bg-paper p-5">
+        <div
+          ref={messagePanelRef}
+          onScroll={() => {
+            const panel = messagePanelRef.current;
+            if (!panel) return;
+            const bottomOffset = panel.scrollHeight - panel.clientHeight - panel.scrollTop;
+            followLatest.current = bottomOffset <= 110;
+            if (followLatest.current) setHasNewerContent(false);
+            saveScrollPosition();
+          }}
+          className="relative min-h-0 flex-1 overflow-auto bg-paper p-5"
+        >
           {!active && <EmptyChat />}
           {active && messages.length === 0 && <EmptyChat />}
           <div className="space-y-4">
@@ -302,6 +391,11 @@ export function ChatConsole() {
               </div>
             )}
           </div>
+          {hasNewerContent && (
+            <button onClick={scrollToLatest} className="focus-ring sticky bottom-3 ml-auto block rounded-full border border-signal/30 bg-card px-3 py-2 text-xs font-semibold text-signal shadow-lg">
+              Jump to latest
+            </button>
+          )}
         </div>
 
         <div className="sticky bottom-0 border-t border-black/10 bg-card/95 p-4 backdrop-blur">
@@ -332,6 +426,15 @@ function formatProviderError(errorType?: string, message?: string) {
     return "Provider model unavailable. Check API key/model config.";
   }
   return message || errorType || "Streaming failed";
+}
+
+function readPreference(key: string) {
+  if (typeof window === "undefined") return "";
+  try {
+    return localStorage.getItem(key) || "";
+  } catch {
+    return "";
+  }
 }
 
 function Control({ label, children }: { label: string; children: ReactNode }) {
@@ -386,9 +489,48 @@ function MessageBubble({ message }: { message: Message }) {
           </Link>
         )}
       </div>
-      <div className="whitespace-pre-wrap leading-6 text-ink">{message.content || (message.status === "streaming" ? "Waiting for first token..." : "")}</div>
+      {assistant ? (
+        <AssistantResponse content={message.content || (message.status === "streaming" ? "Waiting for first token..." : "")} />
+      ) : (
+        <div className="whitespace-pre-wrap leading-6 text-ink">{message.content}</div>
+      )}
     </div>
   );
+}
+
+/** Render the small Markdown subset returned by providers without exposing syntax. */
+function AssistantResponse({ content }: { content: string }) {
+  const lines = content.split("\n");
+  return (
+    <div className="space-y-2 leading-6 text-ink">
+      {lines.map((line, index) => {
+        const heading = line.match(/^\s{0,3}#{1,6}\s+(.+)$/);
+        if (heading) {
+          return <p className="pt-1 text-base font-semibold" key={index}>{cleanMarkdownText(heading[1])}</p>;
+        }
+        if (/^\s{0,3}(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+          return null;
+        }
+        const bullet = line.match(/^(\s*)[-*+]\s+(.+)$/);
+        if (bullet) {
+          const depth = Math.min(Math.floor(bullet[1].length / 2), 3);
+          return <p className="pl-5" key={index} style={{ marginLeft: `${depth * 14}px` }}><span className="mr-2 text-signal">•</span>{cleanMarkdownText(bullet[2])}</p>;
+        }
+        if (!line.trim()) {
+          return <div className="h-2" key={index} />;
+        }
+        return <p key={index}>{cleanMarkdownText(line)}</p>;
+      })}
+    </div>
+  );
+}
+
+function cleanMarkdownText(value: string) {
+  return value
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/__(.+?)__/g, "$1")
+    .replace(/`(.+?)`/g, "$1")
+    .replace(/\\([#*_`])/g, "$1");
 }
 
 function optimisticMessage(conversationId: string, role: "user" | "assistant", content: string): Message {

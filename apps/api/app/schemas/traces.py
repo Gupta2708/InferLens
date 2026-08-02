@@ -1,4 +1,3 @@
-from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -19,10 +18,11 @@ class TraceOut(BaseModel):
     status: str
     conversation_id: UUID | None = None
     message_id: UUID | None = None
+    otel: dict[str, Any] = Field(default_factory=dict)
+    external_trace_url: str | None = None
     summary: dict[str, Any] = Field(default_factory=dict)
     spans: list[dict[str, Any]] = Field(default_factory=list)
     stream_events: list[dict[str, Any]] = Field(default_factory=list)
     errors: list[dict[str, Any]] = Field(default_factory=list)
     redactions: list[dict[str, Any]] = Field(default_factory=list)
     replays: list[dict[str, Any]] = Field(default_factory=list)
-

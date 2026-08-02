@@ -1,5 +1,8 @@
 export function money(value: number) {
-  return `$${value.toFixed(6)}`;
+  if (!value) return "$0";
+  if (value < 0.000001) return "< $0.000001";
+  if (value < 0.01) return `$${value.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")}`;
+  return `$${value.toFixed(4)}`;
 }
 
 export function ms(value?: number | null) {

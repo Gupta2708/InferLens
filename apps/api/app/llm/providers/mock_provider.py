@@ -15,6 +15,8 @@ class MockProvider:
 
     async def generate(self, request: LLMRequest) -> LLMResponse:
         await self._maybe_fail(request)
+        if request.model == "mock-slow":
+            await asyncio.sleep(0.45)
         prompt = request.messages[-1].content if request.messages else ""
         content = f"Mock response for: {prompt[:160]}"
         input_tokens = sum(_tokens(message.content) for message in request.messages)
@@ -27,6 +29,8 @@ class MockProvider:
             output_tokens=output_tokens,
             total_tokens=input_tokens + output_tokens,
             safe_metadata={"mock": True, "scenario": request.mock_scenario or "normal"},
+            provider_request_id=f"mock-{request.model}",
+            finish_reason="stop",
         )
 
     async def stream(self, request: LLMRequest) -> AsyncIterator[LLMChunk]:
@@ -35,10 +39,18 @@ class MockProvider:
         content = f"Mock streaming response for: {prompt[:160]}"
         delay = 0.45 if request.model == "mock-slow" else get_settings().mock_chunk_delay_ms / 1000
         for index, word in enumerate(content.split()):
+            if request.cancellation_event is not None and request.cancellation_event.is_set():
+                raise UserCancelledError("Mock request cancelled")
             if request.mock_scenario == "cancel_after_3" and index >= 3:
                 raise UserCancelledError("Mock stream cancelled after 3 chunks")
             await asyncio.sleep(delay)
             yield LLMChunk(delta=(word + " "), sequence_number=index + 1)
+
+    async def health_check(self) -> dict:
+        return {"status": "healthy", "deterministic": True}
+
+    def metadata(self) -> dict:
+        return {"provider": self.provider, "supports_streaming": True, "models": ["mock-fast", "mock-slow", "mock-error"]}
 
     async def _maybe_fail(self, request: LLMRequest) -> None:
         scenario = "provider_error" if request.model == "mock-error" else request.mock_scenario

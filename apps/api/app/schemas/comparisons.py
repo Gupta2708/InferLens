@@ -32,6 +32,13 @@ class ComparisonResultOut(BaseModel):
     estimated_total_cost: float
     output_preview: str
     error_type: str | None
+    error_category: str | None = None
+    input_tokens: int = 0
+    output_tokens: int = 0
+    finish_reason: str | None = None
+    retry_count: int = 0
+    fallback_provider: str | None = None
+    completed_at: datetime | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -47,4 +54,3 @@ class ComparisonRunOut(BaseModel):
     results: list[ComparisonResultOut] = []
 
     model_config = {"from_attributes": True}
-

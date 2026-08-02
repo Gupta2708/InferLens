@@ -45,17 +45,29 @@ class InferenceEventIn(BaseModel):
     input_preview: str = ""
     output_preview: str = ""
     error_type: str | None = None
+    error_category: str | None = None
     error_message: str | None = None
     retryable: bool = False
+    retry_count: int = 0
+    fallback_provider: str | None = None
+    routing_strategy: str | None = None
+    routing_history_json: list[dict[str, Any]] = Field(default_factory=list)
+    finish_reason: str | None = None
+    first_token_at: datetime | None = None
+    completed_at: datetime | None = None
+    content_captured: bool = False
+    otel_trace_id: str | None = None
+    otel_root_span_id: str | None = None
+    otel_instrumented_at: datetime | None = None
     request_snapshot_json: dict[str, Any] = Field(default_factory=dict)
     safe_metadata_json: dict[str, Any] = Field(default_factory=dict)
     spans: list[SpanEvent] = Field(default_factory=list)
     stream_events: list[StreamEventIn] = Field(default_factory=list)
     replayed_from_trace_id: str | None = None
+    original_trace_id: str | None = None
     comparison_run_id: UUID | None = None
 
 
 class IngestAccepted(BaseModel):
     status: str = "accepted"
     event_id: str
-

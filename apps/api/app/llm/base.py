@@ -19,6 +19,7 @@ class LLMRequest:
     stream: bool = True
     mock_scenario: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    cancellation_event: Any | None = None
 
 
 @dataclass
@@ -26,6 +27,10 @@ class LLMChunk:
     delta: str
     sequence_number: int
     event_type: str = "token"
+    finish_reason: str | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
 
 
 @dataclass
@@ -36,6 +41,11 @@ class LLMResponse:
     input_tokens: int
     output_tokens: int
     total_tokens: int
+    provider_request_id: str | None = None
+    latency_ms: int | None = None
+    time_to_first_token_ms: int | None = None
+    finish_reason: str | None = None
+    status: str = "completed"
     safe_metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -48,3 +58,8 @@ class Provider(Protocol):
     async def stream(self, request: LLMRequest) -> AsyncIterator[LLMChunk]:
         ...
 
+    async def health_check(self) -> dict[str, Any]:
+        ...
+
+    def metadata(self) -> dict[str, Any]:
+        ...

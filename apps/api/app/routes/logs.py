@@ -16,6 +16,7 @@ def list_logs(
     model: str | None = None,
     status: str | None = None,
     conversation_id: str | None = None,
+    trace_id: str | None = None,
     error_type: str | None = None,
     date_from: datetime | None = None,
     date_to: datetime | None = None,
@@ -31,6 +32,8 @@ def list_logs(
         query = query.filter(models.InferenceLog.status == status)
     if conversation_id:
         query = query.filter(models.InferenceLog.conversation_id == conversation_id)
+    if trace_id:
+        query = query.filter(models.InferenceLog.trace_id == trace_id)
     if error_type:
         query = query.filter(models.InferenceLog.error_type == error_type)
     if date_from:

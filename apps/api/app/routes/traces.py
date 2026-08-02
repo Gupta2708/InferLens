@@ -33,4 +33,5 @@ async def replay(trace_id: str, payload: TraceReplayRequest, db: Session = Depen
         return await ReplayService(db).replay(trace_id, payload)
     except KeyError:
         raise HTTPException(status_code=404, detail="Trace not found")
-
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))

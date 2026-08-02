@@ -314,6 +314,22 @@ Use the Redis TCP URL (`redis://` or `rediss://`), not a REST URL.
 - Failures are normalized in traces: invalid provider/model, missing key, rate limit, model not found, server error, invalid request, cancellation, and worker persistence failure
 - Ingestion is idempotent by `event_id`; repeated worker failures move to dead-letter storage
 
+### Gateway resilience and optional telemetry
+
+- Every provider adapter returns a normalized result and normalized safe error category. With both real keys configured, OpenAI and Gemini retry once then fall back to each other. With one real key, InferLens retries that provider once and returns a normalized error if it still fails. `PROVIDER_FALLBACKS` can override the reciprocal default, but Mock is never a runtime fallback for a real-provider failure.
+- With neither real key, InferLens automatically uses deterministic `mock/mock-fast`; `LLM_MOCK_MODE=true` forces that same simulated mode even when keys exist. Mock responses are always recorded as `provider=mock`.
+- `CONTENT_CAPTURE_ENABLED=false` is the default. Operational logs then contain metrics and safe metadata only. When capture is enabled, previews, stream events, and replay snapshots are PII-redacted and bounded before persistence.
+- OpenTelemetry is optional (`OTEL_ENABLED=false` by default). Set `OTEL_EXPORTER_OTLP_ENDPOINT` for generic OTLP HTTP/protobuf export. Export failure is non-fatal, and no raw prompt or response attributes are exported.
+- Redis envelopes carry W3C trace context when telemetry is active. The worker extracts context per message and safely ignores malformed headers.
+
+### Health, metrics, and benchmark
+
+- `GET /health/live` checks that the API process is running; `GET /health/ready` reports database, Redis, and provider-registry readiness without secrets.
+- `GET /metrics` exposes low-cardinality Prometheus metrics for request latency/TTFT, tokens, cost, retries, fallbacks, Redis publishing, worker errors, dead letters, replays, comparisons, and PII redactions.
+- Run the deterministic benchmark with `cd apps/api && python -m app.benchmarks.mock_gateway_benchmark`. It emits machine, date, request count, concurrency, and measured results as JSON.
+
+Latest local Mock benchmark (2026-08-02 UTC, Windows 10, Python 3.11.6, 50 requests, concurrency 10): 21,523.89 requests/sec, 0.020 ms P50 request latency, and 0.049 ms P95 request latency. These results use a no-delay in-process Mock provider and must not be interpreted as real-provider or production throughput.
+
 ---
 
 ## License

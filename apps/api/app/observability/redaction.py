@@ -36,3 +36,13 @@ def redact_event_payload(payload: dict) -> tuple[dict, list[Redaction]]:
         all_redactions.extend(redactions)
     return clean, all_redactions
 
+
+def redact_messages(messages: list[dict]) -> tuple[list[dict], list[Redaction]]:
+    clean: list[dict] = []
+    events: list[Redaction] = []
+    for message in messages:
+        item = dict(message)
+        item["content"], found = redact_text(str(item.get("content") or ""), "request_snapshot")
+        clean.append(item)
+        events.extend(found)
+    return clean, events
