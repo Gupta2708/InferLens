@@ -13,26 +13,25 @@
 
 </div>
 
-InferLens includes a chatbot to generate model traffic, but the main project is the infrastructure around each LLM call: provider routing, inference logging, Redis-based ingestion, PostgreSQL persistence, dashboards, trace replay, provider comparison, and PII-safe observability.
+InferLens ships a chatbot to generate traffic, but the real project is the infrastructure around every LLM call: provider routing, inference logging, Redis-based ingestion, PostgreSQL persistence, dashboards, trace replay, provider comparison, and PII-safe observability.
 
-Most teams can build a chatbot before they can explain what happened inside a single LLM request. InferLens answers which provider/model handled it, how long it took, how many tokens it used, whether it streamed, failed, or was cancelled, what context was sent, whether sensitive data was redacted, and whether the request can be replayed.
+Most teams can build a chatbot before they can explain what happened inside a single LLM request. InferLens answers which provider/model handled it, how long it took, how many tokens it used, whether it streamed, failed, or was cancelled, what context was sent, whether sensitive data was redacted, and whether it can be replayed.
 
 ---
 
 ## Features
 
-- Multi-turn chatbot with short context window, streaming responses, and cancellation
-- Provider-agnostic LLM gateway with Mock, OpenAI, and Gemini adapters
-- Provider/model validation to prevent invalid combinations
+- Multi-turn chatbot with short context, streaming responses, and cancellation
+- Provider-agnostic gateway with Mock, OpenAI, and Gemini adapters, plus retry and reciprocal fallback
+- Provider/model validation to block invalid combinations
 - Inference logs with latency, first-token timing, tokens, cost, status, and errors
-- Redis Streams ingestion pipeline with worker processing
+- Redis Streams ingestion with an idempotent, dead-letter-backed worker
 - PostgreSQL storage for messages, traces, logs, spans, stream events, and comparisons
-- PII redaction for observability previews
+- PII redaction on all observability previews
 - Dashboard for requests, latency, errors, cancellations, tokens, cost, and provider usage
 - Trace detail with spans, stream events, redactions, provider errors, and replay history
-- Replay from safe request snapshots
-- Provider comparison across configured models
-- Docker Compose setup for local development
+- Replay from safe request snapshots and provider comparison across configured models
+- Optional OpenTelemetry export, `/metrics` Prometheus endpoint, and a deterministic benchmark
 
 ---
 
@@ -65,77 +64,7 @@ flowchart LR
     DB --> Compare[Provider Comparison]
 ```
 
-The request path stays focused: **UI -> API -> gateway -> provider**. Observability data forks through the logger, gets queued in Redis, and is persisted asynchronously by the worker after redaction.
-
----
-
-## Inference Flow
-
-```mermaid
-sequenceDiagram
-    participant UI as Web UI
-    participant API as FastAPI
-    participant Chat as ChatService
-    participant GW as LLMGateway
-    participant Provider as Provider
-    participant Log as ObservabilityLogger
-    participant Redis as Redis Streams
-    participant Worker as Worker
-    participant DB as PostgreSQL
-
-    UI->>API: Send chat message using streaming endpoint
-    API->>Chat: Store message and load recent context
-    Chat->>GW: Validate provider/model and route request
-    GW->>Provider: Forward normalized LLMRequest
-    Provider-->>GW: Chunks, response, or error
-    GW-->>Chat: Normalized provider output
-    Chat-->>UI: Stream response chunks
-    Chat->>Log: Capture trace, spans, tokens, latency, snapshot
-    Log->>Redis: Enqueue inference event
-    Redis->>Worker: Consume stream event
-    Worker->>Worker: Redact previews and normalize payload
-    Worker->>DB: Persist logs, traces, spans, events, redactions
-```
-
----
-
-## Replay Flow
-
-Replay rebuilds a request from `request_snapshot_json`, which contains only replay-safe inputs. API keys, auth headers, cookies, and bearer tokens are never stored there.
-
-```mermaid
-flowchart LR
-    Trace[Trace Page] --> ReplayAPI[POST /api/traces/:id/replay]
-    ReplayAPI --> Snapshot[Load request_snapshot_json]
-    Snapshot --> Options[Apply replay options]
-    Options --> Gateway[LLM Gateway]
-    Gateway --> Provider[Provider]
-    Provider --> Logger[Observability Logger]
-    Logger --> Redis[(Redis Streams)]
-    Redis --> Worker[Worker persistence]
-    Worker --> Result[Replay trace and log rows]
-```
-
----
-
-## Provider Comparison Flow
-
-Comparison reuses the same gateway and logging stack. Each selected provider/model target gets its own trace and log.
-
-```mermaid
-flowchart TB
-    Prompt[Prompt + selected targets] --> Run[Create comparison run]
-    Run --> Fanout{For each target}
-    Fanout --> A[Provider/model A]
-    Fanout --> B[Provider/model B]
-    Fanout --> C[Provider/model C]
-    A --> Results[(comparison_results)]
-    B --> Results
-    C --> Results
-    Results --> UI[Comparison UI: latency, tokens, cost, output, errors, trace link]
-```
-
-No quality ranking, LLM-as-judge, or benchmark scoring is included.
+The request path stays focused: **UI → API → gateway → provider**. Observability data forks through the logger, queues in Redis, and is persisted asynchronously by the worker after redaction.
 
 ---
 
@@ -207,128 +136,58 @@ DEFAULT_MODEL=mock-fast
 | `mock-slow` | Slow streaming response for cancellation testing |
 | `mock-error` | Simulated provider error |
 
-To use real providers, set `LLM_MOCK_MODE=false` and configure backend-only provider keys:
-
-```env
-OPENAI_API_KEY=sk-...
-GEMINI_API_KEY=...
-```
+To use real providers, set `LLM_MOCK_MODE=false` and configure backend-only keys (`OPENAI_API_KEY`, `GEMINI_API_KEY`).
 
 ---
 
 ## Deployment
 
-A typical hosted deployment uses separate services for web, API, worker, Postgres, and Redis.
+A typical hosted deployment runs separate services for **web, API, worker, Postgres, and Redis**.
 
-### Frontend
+- **Frontend** — deploy `apps/web` as a Next.js app; set `NEXT_PUBLIC_API_BASE_URL`.
+- **API** — deploy `apps/api` as a Docker service with `SERVICE_ROLE=api`, `DATABASE_URL` (`postgresql+psycopg://`), `REDIS_URL`, and CORS origins. URL-encode special characters in the DB password.
+- **Worker** — deploy `apps/api` again with `SERVICE_ROLE=worker-web`, which starts a small health server plus the Redis ingestion loop. Use a Redis TCP URL (`redis://` or `rediss://`), not a REST URL.
 
-Deploy `apps/web` as a Next.js app.
-
-```text
-Root Directory: apps/web
-Install Command: corepack enable && corepack pnpm@9.12.3 install --frozen-lockfile
-Build Command: corepack pnpm@9.12.3 build
-Output Directory: default / empty
-```
-
-Set:
-
-```env
-NEXT_PUBLIC_API_BASE_URL=https://YOUR-API-DOMAIN
-```
-
-### API
-
-Deploy `apps/api` as a Docker Web Service.
-
-```text
-Root Directory: apps/api
-Dockerfile Path: Dockerfile
-Docker Build Context Directory: apps/api
-Docker Command: empty
-```
-
-Set:
-
-```env
-SERVICE_ROLE=api
-DATABASE_URL=postgresql+psycopg://USER:ENCODED_PASSWORD@HOST:PORT/DATABASE
-REDIS_URL=rediss://default:REDIS_TOKEN@REDIS_HOST:6379
-FRONTEND_URL=https://YOUR-WEB-DOMAIN
-CORS_ORIGINS=https://YOUR-WEB-DOMAIN,http://localhost:3000,http://127.0.0.1:3000
-LLM_MOCK_MODE=true
-OPENAI_API_KEY=
-GEMINI_API_KEY=
-```
-
-Use `postgresql+psycopg://` for PostgreSQL. If the database password contains special characters, URL-encode them, for example `!` as `%21`.
-
-### Worker
-
-Deploy `apps/api` a second time as a Docker Web Service for ingestion processing.
-
-```text
-Root Directory: apps/api
-Dockerfile Path: Dockerfile
-Docker Build Context Directory: apps/api
-Docker Command: empty
-```
-
-Set:
-
-```env
-SERVICE_ROLE=worker-web
-DATABASE_URL=postgresql+psycopg://USER:ENCODED_PASSWORD@HOST:PORT/DATABASE
-REDIS_URL=rediss://default:REDIS_TOKEN@REDIS_HOST:6379
-LLM_MOCK_MODE=false
-LOG_LEVEL=INFO
-```
-
-`SERVICE_ROLE=worker-web` starts a small health server and the Redis ingestion loop together. The health URL should return:
+Worker health should return:
 
 ```json
 {"status":"ok","worker":"running"}
 ```
 
-Use the Redis TCP URL (`redis://` or `rediss://`), not a REST URL.
+### Checklist
 
-### Deployment Checklist
-
-- API health returns `{"status":"ok"}`.
-- Provider configs load from `/api/providers`.
-- Worker health returns `{"status":"ok","worker":"running"}`.
-- Frontend loads `/chat`.
-- Sending a `mock / mock-fast` message creates a log row.
-- Dashboard request count updates.
-- A log row opens a trace page.
+- API health returns `{"status":"ok"}`
+- Provider configs load from `/api/providers`
+- Worker health returns `{"status":"ok","worker":"running"}`
+- Frontend loads `/chat`
+- A `mock / mock-fast` message creates a log row
+- Dashboard request count updates
+- A log row opens its trace page
 
 ---
 
-## Security and Reliability
+## Security & Reliability
 
 - PII redaction covers emails, phone numbers, API-key-like strings, JWT-like tokens, and credit-card-like patterns in observability previews
-- API keys are never stored in request snapshots
-- Headers, cookies, bearer tokens, and secrets are not persisted as raw metadata
-- Provider error messages are sanitized before display
-- Canonical chat content is kept separate from redacted observability previews
-- Failures are normalized in traces: invalid provider/model, missing key, rate limit, model not found, server error, invalid request, cancellation, and worker persistence failure
-- Ingestion is idempotent by `event_id`; repeated worker failures move to dead-letter storage
+- API keys, headers, cookies, bearer tokens, and secrets are never persisted in snapshots or raw metadata
+- Provider error messages are sanitized before display; canonical chat content stays separate from redacted previews
+- Failures are normalized in traces (invalid provider/model, missing key, rate limit, model not found, server error, cancellation, worker failure)
+- Ingestion is idempotent by `event_id`; repeated failures move to dead-letter storage
 
-### Gateway resilience and optional telemetry
+### Gateway resilience & telemetry
 
-- Every provider adapter returns a normalized result and normalized safe error category. With both real keys configured, OpenAI and Gemini retry once then fall back to each other. With one real key, InferLens retries that provider once and returns a normalized error if it still fails. `PROVIDER_FALLBACKS` can override the reciprocal default, but Mock is never a runtime fallback for a real-provider failure.
-- With neither real key, InferLens automatically uses deterministic `mock/mock-fast`; `LLM_MOCK_MODE=true` forces that same simulated mode even when keys exist. Mock responses are always recorded as `provider=mock`.
-- `CONTENT_CAPTURE_ENABLED=false` is the default. Operational logs then contain metrics and safe metadata only. When capture is enabled, previews, stream events, and replay snapshots are PII-redacted and bounded before persistence.
-- OpenTelemetry is optional (`OTEL_ENABLED=false` by default). Set `OTEL_EXPORTER_OTLP_ENDPOINT` for generic OTLP HTTP/protobuf export. Export failure is non-fatal, and no raw prompt or response attributes are exported.
-- Redis envelopes carry W3C trace context when telemetry is active. The worker extracts context per message and safely ignores malformed headers.
+- Every adapter returns a normalized result and safe error category. With both real keys set, OpenAI and Gemini retry once then fall back to each other; with one key, that provider retries once. `PROVIDER_FALLBACKS` overrides the default, but Mock is never a runtime fallback for a real-provider failure.
+- With no real keys, InferLens uses deterministic `mock/mock-fast`; `LLM_MOCK_MODE=true` forces that mode even when keys exist. Mock responses always record as `provider=mock`.
+- `CONTENT_CAPTURE_ENABLED=false` by default — logs then hold metrics and safe metadata only. When enabled, previews, stream events, and snapshots are PII-redacted and bounded before persistence.
+- OpenTelemetry is optional (`OTEL_ENABLED=false`). Set `OTEL_EXPORTER_OTLP_ENDPOINT` for OTLP HTTP/protobuf export; export failure is non-fatal and no raw prompt/response attributes leave the process. Redis envelopes carry W3C trace context when telemetry is active.
 
-### Health, metrics, and benchmark
+### Health, metrics & benchmark
 
-- `GET /health/live` checks that the API process is running; `GET /health/ready` reports database, Redis, and provider-registry readiness without secrets.
-- `GET /metrics` exposes low-cardinality Prometheus metrics for request latency/TTFT, tokens, cost, retries, fallbacks, Redis publishing, worker errors, dead letters, replays, comparisons, and PII redactions.
-- Run the deterministic benchmark with `cd apps/api && python -m app.benchmarks.mock_gateway_benchmark`. It emits machine, date, request count, concurrency, and measured results as JSON.
+- `GET /health/live` checks the process; `GET /health/ready` reports database, Redis, and provider-registry readiness without secrets.
+- `GET /metrics` exposes low-cardinality Prometheus metrics for latency/TTFT, tokens, cost, retries, fallbacks, Redis publishing, worker errors, dead letters, replays, comparisons, and redactions.
+- Run the deterministic benchmark with `cd apps/api && python -m app.benchmarks.mock_gateway_benchmark`.
 
-Latest local Mock benchmark (2026-08-02 UTC, Windows 10, Python 3.11.6, 50 requests, concurrency 10): 21,523.89 requests/sec, 0.020 ms P50 request latency, and 0.049 ms P95 request latency. These results use a no-delay in-process Mock provider and must not be interpreted as real-provider or production throughput.
+> Latest local Mock benchmark (2026-08-02 UTC, Windows 10, Python 3.11.6, 50 requests, concurrency 10): **21,523.89 req/sec**, **0.020 ms** P50 and **0.049 ms** P95 request latency. These use a no-delay in-process Mock provider and are **not** real-provider or production throughput.
 
 ---
 
