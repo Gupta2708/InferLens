@@ -15,7 +15,9 @@
 
 InferLens ships a chatbot to generate traffic, but the real project is the infrastructure around every LLM call: provider routing, inference logging, Redis-based ingestion, PostgreSQL persistence, dashboards, trace replay, provider comparison, and PII-safe observability.
 
-Most teams can build a chatbot before they can explain what happened inside a single LLM request. InferLens answers which provider/model handled it, how long it took, how many tokens it used, whether it streamed, failed, or was cancelled, what context was sent, whether sensitive data was redacted, and whether it can be replayed.
+> Most teams can build a chatbot before they can explain what happened inside a single LLM request.
+
+InferLens answers that question for every call — which provider and model handled it, how long it took, how many tokens and how much it cost, whether it streamed, failed, or was cancelled, what context was sent, whether sensitive data was redacted, and whether it can be replayed.
 
 ---
 
