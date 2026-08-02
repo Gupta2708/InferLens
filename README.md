@@ -68,6 +68,38 @@ The request path stays focused: **UI → API → gateway → provider**. Observa
 
 ---
 
+## Inference Flow
+
+```mermaid
+sequenceDiagram
+    participant UI as Web UI
+    participant API as FastAPI
+    participant Chat as ChatService
+    participant GW as LLMGateway
+    participant Provider as Provider
+    participant Log as ObservabilityLogger
+    participant Redis as Redis Streams
+    participant Worker as Worker
+    participant DB as PostgreSQL
+
+    UI->>API: Send chat message (streaming endpoint)
+    API->>Chat: Store message, load recent context
+    Chat->>GW: Validate provider/model, route request
+    GW->>Provider: Forward normalized LLMRequest
+    Provider-->>GW: Chunks, response, or error
+    GW-->>Chat: Normalized provider output
+    Chat-->>UI: Stream response chunks
+    Chat->>Log: Capture trace, spans, tokens, latency, snapshot
+    Log->>Redis: Enqueue inference event
+    Redis->>Worker: Consume stream event
+    Worker->>Worker: Redact previews, normalize payload
+    Worker->>DB: Persist logs, traces, spans, events, redactions
+```
+
+The user-facing stream returns immediately; persistence happens off the hot path, so observability never slows the response.
+
+---
+
 ## Tech Stack
 
 | Layer | Technologies |
