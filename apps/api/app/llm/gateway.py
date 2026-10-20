@@ -27,7 +27,8 @@ class LLMGateway:
         real = configured_real_providers(self.settings)
         if effective_mock_mode(self.settings):
             resolved = "mock"
-        elif provider in real:
+        elif provider == "mock" or provider in real:
+            # An explicit mock request is honored; mock is still never a fallback target.
             resolved = provider
         elif len(real) == 1:
             resolved = next(iter(real))
